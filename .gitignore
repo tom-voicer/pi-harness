@@ -1,0 +1,13 @@
+# Secrets — never commit
+auth.json
+
+# Session logs — personal + large
+sessions/
+
+# Binary tools — not custom
+bin/
+
+# Pi internals — not config
+convert
+write
+.DS_Store
