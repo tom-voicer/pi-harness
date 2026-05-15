@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# piper — goal-driven shell pipeline architect
+# Shortcut for: pi -p --agent piper "$@"
+exec pi -p --agent piper "$@"
