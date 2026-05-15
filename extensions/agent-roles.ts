@@ -68,6 +68,22 @@ export default function (pi: ExtensionAPI) {
           pi.setThinkingLevel(config.thinking as "off" | "minimal" | "low" | "medium" | "high" | "xhigh");
         }
       }
+
+      // Show agent capabilities in startup notification
+      const toolList = config.tools
+        ? config.tools.split(",").map((t: string) => t.trim()).filter(Boolean)
+        : [];
+      const skillList = config.skills
+        ? config.skills.split(",").map((s: string) => s.trim()).filter(Boolean)
+        : [];
+
+      const lines: string[] = [];
+      if (config.description) lines.push(config.description);
+      lines.push(`Tools: ${toolList.length > 0 ? toolList.join(", ") : "none (read-only)"}`);
+      lines.push(`Skills: ${skillList.length > 0 ? skillList.join(", ") : "none"}`);
+      lines.push(`Thinking: ${config.thinking ?? pi.getThinkingLevel()}`);
+
+      ctx.ui.notify(`[Agent: ${flagAgent}]\n${lines.join("\n")}`, "info");
     }
   });
 
