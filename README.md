@@ -139,6 +139,16 @@ Reference for the `llm` CLI tool by Simon Willison — schema syntax (`--schema`
 
 ## CLI
 
+### agent (generic)
+
+```bash
+agent <agent-name> <prompt...>
+agent doug "review this code"
+agent piper "summarize https://example.com"
+```
+
+Shell script at [`bin/agent`](bin/agent). Generic wrapper — runs any agent by name: `pi -p --agent <name> "$@"`. Add `~/.pi/agent/bin` to your PATH.
+
 ### piper
 
 ```bash
@@ -147,7 +157,7 @@ piper "list top 10 sci-fi movies"
 piper "summarize https://example.com"
 ```
 
-Shell script at [`bin/piper`](bin/piper). Wraps `pi -p --agent piper "$@"`.
+Shell script at [`bin/piper`](bin/piper). Convenience shortcut — wraps `pi -p --agent piper "$@"`. Add `~/.pi/agent/bin` to your PATH.
 
 ---
 
@@ -160,7 +170,8 @@ Shell script at [`bin/piper`](bin/piper). Wraps `pi -p --agent piper "$@"`.
 ├── settings.json                # Pi settings
 ├── models.json                  # Custom model configs
 ├── bin/
-│   └── piper                    # CLI shortcut script
+│   ├── agent                    # Generic agent CLI: agent <name> <prompt>
+│   └── piper                    # piper-specific CLI shortcut
 ├── extensions/
 │   ├── agent-roles.ts           # --agent flag, system prompt injection, output constraints
 │   ├── tavily-search.ts         # web_search tool
