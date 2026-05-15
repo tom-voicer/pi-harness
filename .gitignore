@@ -4,9 +4,10 @@ auth.json
 # Session logs — personal + large
 sessions/
 
-# Binary tools — not custom (but shell scripts like piper are tracked)
+# Binary tools — not custom (but shell scripts like piper/agent are tracked)
 bin/*
 !bin/piper
+!bin/agent
 
 # Pi internals — not config
 convert
