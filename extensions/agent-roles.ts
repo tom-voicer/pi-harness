@@ -25,10 +25,10 @@ interface AgentConfig {
   systemPrompt: string;
   model?: string;
   thinking?: string;
+  /** Comma-separated tool names (opt-in — no tools by default) */
   tools?: string;
-  blockedTools?: string;
+  /** Comma-separated skill names (opt-in — no skills by default) */
   skills?: string;
-  blockedSkills?: string;
   /** JS file in ~/.pi/agent/end-scripts/ that runs after each agent turn */
   endScript?: string;
 }
@@ -51,12 +51,24 @@ export default function (pi: ExtensionAPI) {
   let currentAgent: string | undefined;
   let agents: AgentRegistry = {};
 
-  // --- Load agent configs on startup ---
+  // --- Load agent configs and apply thinking on startup ---
   pi.on("session_start", (_event, ctx) => {
     const homeDir = process.env.PI_CODING_AGENT_DIR || path.join(require("node:os").homedir(), ".pi", "agent");
     const globalPath = path.join(homeDir, "agents.json");
     const projectPath = path.join(ctx.cwd, ".pi", "agents.json");
     agents = mergeAgents(loadAgents(globalPath), loadAgents(projectPath));
+
+    // Apply agent thinking level immediately (before any message is sent)
+    const flagAgent = pi.getFlag("agent") as string | undefined;
+    if (flagAgent) {
+      const config = agents[flagAgent];
+      if (config?.thinking && !process.argv.includes("--thinking")) {
+        const valid = ["off", "minimal", "low", "medium", "high", "xhigh"];
+        if (valid.includes(config.thinking)) {
+          pi.setThinkingLevel(config.thinking as "off" | "minimal" | "low" | "medium" | "high" | "xhigh");
+        }
+      }
+    }
   });
 
   // --- Register CLI flag ---
@@ -106,40 +118,26 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
-    // --- Tools ---
+    // --- Tools (opt-in: only if config.tools is explicitly set) ---
     if (!userSetTools) {
       if (config.tools) {
         pi.setActiveTools(config.tools.split(",").map((t) => t.trim()).filter(Boolean));
-      } else if (config.blockedTools) {
-        const blocked = new Set(config.blockedTools.split(",").map((t) => t.trim()).filter(Boolean));
-        pi.setActiveTools(pi.getAllTools().map((t) => t.name).filter((n) => !blocked.has(n)));
+      } else {
+        pi.setActiveTools([]);
       }
     }
 
-    // --- Skills (soft: prompt instruction; hard: input handler below) ---
+    // --- Skills (opt-in: only if config.skills is explicitly set) ---
     let skillInstruction = "";
     if (!userSetSkills) {
       if (config.skills) {
         const allowed = config.skills.split(",").map((s) => s.trim()).filter(Boolean);
         skillInstruction = `\n## Skill Restrictions\nYou are ONLY allowed to use these skills: ${allowed.join(", ")}. NEVER invoke any other skill via /skill:name. If you need documentation not covered by these skills, use your available tools instead.\n`;
-      } else if (config.blockedSkills) {
-        const blocked = config.blockedSkills.split(",").map((s) => s.trim()).filter(Boolean);
-        skillInstruction = `\n## Skill Restrictions\nYou are NOT allowed to use these skills: ${blocked.join(", ")}. All other skills are available. If you need documentation covered by a blocked skill, use your tools instead.\n`;
       }
     }
 
-    // Append a hard output constraint AFTER the base system prompt so it's
-    // the LAST thing the model reads (models weight later text more heavily).
-    // The base pi prompt says "be helpful" which can override piper's output
-    // format rules when they're only at the beginning.
-    const outputConstraint = "\n\n## ⛔ OUTPUT CONSTRAINT — READ THIS LAST\n\n" +
-      "You are the pipe architect. Your ONLY allowed output is a raw shell pipe command. " +
-      "You must NEVER output markdown, explanations, tables, summaries, or answers of any kind. " +
-      "Output the pipe command and nothing else — no text before, no text after, no code fences, no backticks. " +
-      "Your entire response must be a single line: the raw pipe command.";
-
     return {
-      systemPrompt: config.systemPrompt + skillInstruction + "\n\n" + event.systemPrompt + outputConstraint,
+      systemPrompt: config.systemPrompt + skillInstruction,
     };
   });
 
@@ -160,15 +158,13 @@ export default function (pi: ExtensionAPI) {
     if (config.skills) {
       const allowed = config.skills.split(",").map((s) => s.trim()).filter(Boolean);
       if (!allowed.includes(skillName)) {
-        ctx.ui.notify(`Skill "${skillName}" is blocked for agent "${agentName}". Allowed: ${allowed.join(", ")}`, "error");
+        ctx.ui.notify(`Skill "${skillName}" is not allowed for agent "${agentName}". Allowed: ${allowed.join(", ")}`, "error");
         return { action: "handled" };
       }
-    } else if (config.blockedSkills) {
-      const blocked = config.blockedSkills.split(",").map((s) => s.trim()).filter(Boolean);
-      if (blocked.includes(skillName)) {
-        ctx.ui.notify(`Skill "${skillName}" is blocked for agent "${agentName}".`, "error");
-        return { action: "handled" };
-      }
+    } else {
+      // No skills configured → block all /skill: commands
+      ctx.ui.notify(`Skills are disabled for agent "${agentName}".`, "error");
+      return { action: "handled" };
     }
   });
 

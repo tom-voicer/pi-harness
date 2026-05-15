@@ -5,12 +5,41 @@
 # Example: agent doug "review this code"
 set -euo pipefail
 
+# Auto-discover agents from agents.json
+agents_json="$HOME/.pi/agent/agents.json"
+available=""
+if [ -f "$agents_json" ]; then
+  available=$(python3 -c "
+import json, sys
+try:
+    with open('$agents_json') as f:
+        agents = json.load(f)
+    print(', '.join(agents.keys()))
+except: pass
+" 2>/dev/null)
+fi
+
 if [ $# -lt 2 ]; then
   echo "Usage: agent <agent-name> <prompt...>"
-  echo "Available agents: piper, doug"
+  echo "Available agents: ${available:-none configured}"
   exit 1
 fi
 
 agent_name="$1"
 shift
+
+# Validate agent exists
+if [ -f "$agents_json" ]; then
+  if ! python3 -c "
+import json, sys
+with open('$agents_json') as f:
+    agents = json.load(f)
+sys.exit(0 if '$agent_name' in agents else 1)
+" 2>/dev/null; then
+    echo "Unknown agent: $agent_name"
+    echo "Available agents: ${available:-none configured}"
+    exit 1
+  fi
+fi
+
 exec pi -p --agent "$agent_name" "$*"
