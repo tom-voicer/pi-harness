@@ -321,7 +321,7 @@ module.exports = function (input) {
         `**For the piper agent:** When a user asks something open-ended like\n` +
         `\"I want to build X\" or \"Help me with Y\", always default to the\n` +
         `search→extract→organize pattern:\n` +
-        `\`pi -p "search tavily for [topic] and extract top results" | llm "organize into a helpful guide"\``
+        `\`pi -p "search the web for [topic] and extract top results" | llm "organize into a helpful guide"\``
       : "";
     return {
       ok: false,

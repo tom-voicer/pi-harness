@@ -178,7 +178,7 @@ export default function (pi: ExtensionAPI) {
 
     // Skip tool-call messages — only validate final text responses.
     // Tool calls have no text content yet; validating them would block the
-    // agent from using tools (tavily_search, etc.) before producing output.
+    // agent from using tools (web_search, etc.) before producing output.
     const hasTextContent = event.message.content?.some((c: any) => c.type === "text");
     if (!hasTextContent) return;
 

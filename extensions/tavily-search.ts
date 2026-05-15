@@ -21,15 +21,15 @@ interface TavilySearchResponse {
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
-    name: "tavily_search",
+    name: "web_search",
     label: "Tavily Search",
     description:
       "Search the web using Tavily. Returns results with titles, URLs, and content snippets. Useful for finding current information, documentation, or answering questions that require up-to-date web data.",
     promptSnippet: "Web search via Tavily — returns titles, URLs, and content",
     promptGuidelines: [
-      "Use tavily_search when you need current, up-to-date information from the web.",
-      "Use tavily_search when the user asks about recent events, news, or documentation that may have changed.",
-      "Always cite sources from tavily_search results with URLs.",
+      "Use web_search when you need current, up-to-date information from the web.",
+      "Use web_search when the user asks about recent events, news, or documentation that may have changed.",
+      "Always cite sources from web_search results with URLs.",
     ],
     parameters: Type.Object({
       query: Type.String({ description: "Search query string" }),

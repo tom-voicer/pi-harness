@@ -28,15 +28,15 @@ interface TavilyExtractResponse {
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
-    name: "tavily_extract",
+    name: "web_extract",
     label: "Tavily Extract",
     description:
       "Extract clean, raw content from one or more web page URLs using Tavily Extract. Returns the page content in markdown or plain text. Useful for fetching full documentation pages, articles, or any web content the LLM needs to read in detail.",
     promptSnippet: "Extract clean content from URLs via Tavily — returns raw markdown/text",
     promptGuidelines: [
-      "Use tavily_extract to pull the full content of a web page from a URL when you need detailed information.",
-      "Use tavily_extract after tavily_search returns promising URLs that need deeper reading.",
-      "When extracting from multiple URLs, batch them into a single tavily_extract call (up to 20 URLs).",
+      "Use web_extract to pull the full content of a web page from a URL when you need detailed information.",
+      "Use web_extract after web_search returns promising URLs that need deeper reading.",
+      "When extracting from multiple URLs, batch them into a single web_extract call (up to 20 URLs).",
       "Always cite extracted sources with their URLs.",
     ],
     parameters: Type.Object({
