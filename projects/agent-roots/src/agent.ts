@@ -30,10 +30,7 @@ function buildUserPrompt(task: string, maxAgents: number, toolNames: string[]): 
     ? `\nAvailable tools: ${toolNames.join(", ")}`
     : "";
 
-  return `${task}
-
----
-You have ${maxAgents} subagent spawns available. To delegate, output EXACTLY:
+  return `You MUST delegate this task to subagents. Output EXACTLY a JSON delegation plan in this format (nothing else):
 
 \`\`\`delegate
 {
@@ -43,10 +40,14 @@ You have ${maxAgents} subagent spawns available. To delegate, output EXACTLY:
 }
 \`\`\`
 
+Rules:
 - Each subagent gets budget ${maxAgents - 1}${toolList}
 - Grant tools via the "tools" array (subset of your tools). Omit = no tools.
-- Output ONLY the delegate block (no other text) OR a direct answer.
-- Never announce intentions — just output the block or the answer.`;
+- Each subagent prompt must be detailed, self-contained, and goal-oriented.
+- Include relevant context from the user's request so subagents understand the bigger picture.
+- Output ONLY the delegate block — no text before or after.
+
+Task to delegate: ${task}`;
 }
 
 interface DelegationPlan {
