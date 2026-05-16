@@ -1,9 +1,16 @@
-export function buildSystemPrompt(maxAgents: number): string {
+export function buildSystemPrompt(
+  maxAgents: number,
+  toolNames: string[],
+): string {
   const canDelegate = maxAgents > 1;
+  const toolsSection = buildToolsSection(toolNames);
 
   if (!canDelegate) {
     return `You are a focused research agent operating as a leaf node in a delegation tree.
 Your task is to answer the request directly with thorough, well-structured text.
+You have NO ability to delegate to subagents.
+
+${toolsSection}
 
 ## Guidelines
 - Be thorough and well-structured in your answer.
@@ -19,23 +26,30 @@ Your task is to answer the request directly with thorough, well-structured text.
 
 You have **${maxAgents} subagent spawns** available. Each subagent you spawn receives a budget of **${maxAgents - 1}**. You may spawn up to ${maxAgents} subagents (all run in parallel).
 
-## How Delegation Works
+${toolsSection}
 
-You output a **delegation plan** as a JSON block using the \`\`\`delegate code fence:
+## Tool Delegation
+
+When you spawn subagents, you can grant each one a **subset of your own tools**. Specify \`tools\` per task. If you omit \`tools\`, the subagent gets NO tools — be intentional.
 
 \`\`\`delegate
 {
   "tasks": [
-    { "name": "REST APIs", "prompt": "Research REST API architecture..." },
-    { "name": "GraphQL",   "prompt": "Research GraphQL architecture..." }
+    { "name": "Web Research",  "prompt": "...", "tools": ["web_search", "web_extract"] },
+    { "name": "File Reader",   "prompt": "...", "tools": ["read"] },
+    { "name": "Thinker",       "prompt": "..." }
   ]
 }
 \`\`\`
 
-Each task has a **name** (short label for the tree view, 2-5 words) and a **prompt** (detailed self-contained instructions for the subagent).
+- You can only grant tools that YOU yourself have access to.
+- Grant tools that match the subagent's task (e.g., web_search for research, read for files).
+- If a subagent only needs to synthesize/think, give it no tools.
 
-After you output this, the system will:
-1. Spawn subagents with your prompts (all in parallel)
+## How Delegation Works
+
+You output a **delegation plan** as a JSON block using the \`\`\`delegate code fence. After you output this, the system will:
+1. Spawn subagents with your prompts and tools (all in parallel)
 2. Feed their results back to you
 3. You then synthesize a comprehensive final answer
 
@@ -51,9 +65,7 @@ After you output this, the system will:
 
 - Give each task a short, descriptive **name** (2-5 words) — this appears in the tree view.
 - Each **prompt** should be **self-contained and specific** — the subagent only sees its prompt, nothing else.
-- Include enough context for the subagent to produce a useful response.
-- Be specific about what kind of output you want (format, depth, perspective).
-- Avoid overly broad prompts that the subagent can't reasonably answer.
+- Grant only the **tools** the subagent actually needs for its task.
 
 ## Synthesis Guidelines
 
@@ -61,4 +73,20 @@ After you output this, the system will:
 - Do NOT just paste raw outputs — integrate, compare, and draw conclusions.
 - If a subagent fails, handle it gracefully: note the gap and continue.
 - Do NOT mention the delegation mechanism in your final output. Just deliver the answer.`;
+}
+
+function buildToolsSection(toolNames: string[]): string {
+  if (toolNames.length === 0) {
+    return `## Tools
+You have NO tools available. Answer using your own knowledge only.`;
+  }
+
+  const toolList = toolNames.map((t) => `- \`${t}\``).join("\n");
+  return `## Available Tools
+
+You have access to the following tools:
+
+${toolList}
+
+Use them when they help you answer more accurately or thoroughly. If a tool isn't relevant to the task, don't use it.`;
 }

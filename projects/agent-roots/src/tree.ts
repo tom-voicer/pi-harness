@@ -32,6 +32,10 @@ function renderNode(
 
   let line = `${prefix}${connector}${icon} ${shortPrompt}${budget}`;
 
+  if (node.toolNames.length > 0) {
+    line += ` \x1b[2m[${node.toolNames.join(", ")}]\x1b[0m`;
+  }
+
   if (node.status === "running" && node.startTime) {
     line += ` \x1b[2m[${formatDuration(Date.now() - node.startTime)}]\x1b[0m`;
   } else if (node.status === "success" && node.endTime && node.startTime) {
@@ -109,7 +113,10 @@ export function renderTreeText(state: TreeState): string {
 
   const lines: string[] = [];
   lines.push(
-    `\x1b[1m🌳 roots\x1b[0m  \x1b[2mbudget=${root.maxAgents}\x1b[0m`,
+    `\x1b[1m🌳 roots\x1b[0m  \x1b[2mbudget=${root.maxAgents}\x1b[0m` +
+      (root.toolNames.length > 0
+        ? ` \x1b[2m[${root.toolNames.join(", ")}]\x1b[0m`
+        : ""),
   );
   lines.push("│");
 

@@ -9,6 +9,7 @@ import {
 import type { TreeState, RunConfig, SubagentTask } from "./types.js";
 import { addNode } from "./types.js";
 import { buildSystemPrompt } from "./prompt.js";
+import { resolveTools } from "./tools.js";
 
 let _authStorage: AuthStorage | null = null;
 let _modelRegistry: ModelRegistry | null = null;
@@ -37,17 +38,17 @@ function extractDelegationPlan(text: string): DelegationPlan | null {
   if (delegateMatch) {
     try {
       const parsed = JSON.parse(delegateMatch[1]);
-      // New format: { tasks: [{ name, prompt }, ...] }
       if (Array.isArray(parsed.tasks)) {
         const tasks = parsed.tasks
           .filter((t: any) => typeof t.prompt === "string")
           .map((t: any) => ({
             name: typeof t.name === "string" ? t.name : t.prompt.slice(0, 40),
             prompt: t.prompt,
+            tools: Array.isArray(t.tools) ? t.tools : undefined,
           }));
         if (tasks.length > 0) return { tasks };
       }
-      // Old format: { prompts: [...] } — synthesize names
+      // Old format: { prompts: [...] }
       if (Array.isArray(parsed.prompts)) {
         const tasks = parsed.prompts
           .filter((p: any) => typeof p === "string")
@@ -85,6 +86,7 @@ function extractDelegationPlan(text: string): DelegationPlan | null {
           .map((item: any) => ({
             name: typeof item.name === "string" ? item.name : item.prompt.slice(0, 40),
             prompt: item.prompt,
+            tools: Array.isArray(item.tools) ? item.tools : undefined,
           }));
         if (tasks.length > 0) return { tasks };
       }
@@ -94,9 +96,25 @@ function extractDelegationPlan(text: string): DelegationPlan | null {
   return null;
 }
 
+function validateTools(
+  requested: string[],
+  parentTools: string[],
+  taskName: string,
+): string[] {
+  const valid = requested.filter((t) => parentTools.includes(t));
+  const rejected = requested.filter((t) => !parentTools.includes(t));
+
+  if (rejected.length > 0) {
+    // Tools not in parent's set are silently dropped
+  }
+
+  return valid;
+}
+
 async function executeSubagents(
   tasks: SubagentTask[],
   childBudget: number,
+  parentTools: string[],
   treeState: TreeState,
   parentId: string,
   config: RunConfig,
@@ -117,12 +135,18 @@ async function executeSubagents(
         };
       }
 
+      // Resolve child's tools: subset of parent's tools
+      const childTools = task.tools
+        ? validateTools(task.tools, parentTools, task.name)
+        : [];
+
       const childNode = addNode(
         treeState,
         parentId,
         task.name,
         task.prompt,
         childBudget,
+        childTools,
       );
 
       try {
@@ -133,6 +157,7 @@ async function executeSubagents(
         const output = await runAgent(
           task.prompt,
           childBudget,
+          childTools,
           treeState,
           childNode.id,
           config,
@@ -186,6 +211,7 @@ function formatResultsForSynthesis(
 export async function runAgent(
   prompt: string,
   maxAgents: number,
+  toolNames: string[],
   treeState: TreeState,
   nodeId: string,
   config: RunConfig,
@@ -203,7 +229,6 @@ export async function runAgent(
       )
     : undefined;
 
-  // If no model specified, auto-detect first available
   if (!model) {
     const available = await registry.getAvailable();
     model = available[0];
@@ -217,8 +242,11 @@ export async function runAgent(
 
   const thinkingLevel = (config.thinkingLevel as any) ?? "off";
 
-  // Build system prompt for this agent
-  const systemPrompt = buildSystemPrompt(maxAgents);
+  // Resolve tools
+  const { builtin, custom } = resolveTools(toolNames, config.cwd);
+
+  // Build system prompt
+  const systemPrompt = buildSystemPrompt(maxAgents, toolNames);
 
   const loader = new DefaultResourceLoader({
     cwd: config.cwd,
@@ -234,12 +262,11 @@ export async function runAgent(
     modelRegistry: registry,
     model,
     thinkingLevel,
-    tools: [],
-    customTools: [],
+    tools: builtin,
+    customTools: custom,
     resourceLoader: loader,
   });
 
-  // We'll track the budget across turns
   const budget = { value: maxAgents };
   let currentPrompt = prompt;
 
@@ -271,14 +298,13 @@ export async function runAgent(
         const plan = extractDelegationPlan(response);
 
         if (plan && plan.tasks.length > 0) {
-          // Cap at budget
           const cappedTasks = plan.tasks.slice(0, budget.value);
-
-          // Execute subagents in parallel (each gets budget-1)
           const childBudget = budget.value - 1;
+
           const results = await executeSubagents(
             cappedTasks,
             childBudget,
+            toolNames, // parent tools are the valid set for children
             treeState,
             nodeId,
             config,
@@ -286,18 +312,15 @@ export async function runAgent(
             budget,
           );
 
-          // Feed results back for synthesis
           currentPrompt = formatResultsForSynthesis(results);
           continue;
         }
       }
 
-      // No delegation plan found — this is the final response
       session.dispose();
       return response;
     }
 
-    // Max turns exceeded
     session.dispose();
     return "(Max delegation turns exceeded)";
   } catch (err: any) {

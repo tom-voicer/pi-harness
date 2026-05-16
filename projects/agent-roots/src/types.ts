@@ -5,6 +5,7 @@ export interface AgentNode {
   name: string;
   prompt: string;
   maxAgents: number;
+  toolNames: string[];
   parentId: string | null;
   status: AgentStatus;
   output: string | null;
@@ -29,6 +30,7 @@ export function addNode(
   name: string,
   prompt: string,
   maxAgents: number,
+  toolNames: string[],
 ): AgentNode {
   const id = crypto.randomUUID();
   const node: AgentNode = {
@@ -36,6 +38,7 @@ export function addNode(
     name,
     prompt,
     maxAgents,
+    toolNames,
     parentId,
     status: "pending",
     output: null,
@@ -59,10 +62,12 @@ export function addNode(
 export interface SubagentTask {
   name: string;
   prompt: string;
+  tools?: string[];
 }
 
 export interface RunConfig {
   model?: string;
   thinkingLevel?: string;
   cwd: string;
+  toolNames?: string[];
 }
