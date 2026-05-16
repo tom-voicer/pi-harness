@@ -121,14 +121,16 @@ function countStatuses(state: TreeState) {
   return { completed, running, pending, errors };
 }
 
-function hasSubagents(state: TreeState): boolean {
+function hasContent(state: TreeState): boolean {
   const root = state.rootId ? state.nodes.get(state.rootId) : null;
-  return root ? root.children.length > 0 : false;
+  if (!root) return false;
+  return root.children.length > 0 || root.toolCalls.length > 0;
 }
 
 export function renderTreeText(state: TreeState): string {
   const root = state.rootId ? state.nodes.get(state.rootId) : null;
   if (!root) return "";
+  if (!hasContent(state)) return "";
 
   const lines: string[] = [];
   lines.push(
@@ -179,6 +181,16 @@ let previousTreeText = "";
 
 export function liveRender(state: TreeState): void {
   const tree = renderTreeText(state);
+
+  // Nothing to show yet — clear any previous tree
+  if (!tree) {
+    if (previousLineCount > 0) {
+      process.stdout.write(`\x1b[${previousLineCount}A\x1b[J`);
+      previousLineCount = 0;
+      previousTreeText = "";
+    }
+    return;
+  }
 
   // Skip if unchanged
   if (tree === previousTreeText) return;
