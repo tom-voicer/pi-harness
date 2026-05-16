@@ -352,7 +352,7 @@ export async function runAgent(
     authStorage: getAuth(),
     modelRegistry: registry,
     model,
-    thinkingLevel: (config.thinkingLevel as any) ?? "high",
+    thinkingLevel: (config.thinkingLevel as any) ?? "xhigh",
     tools: toolNames,
     customTools: custom,
     resourceLoader: loader,

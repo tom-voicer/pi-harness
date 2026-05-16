@@ -12,6 +12,7 @@
           "maxTokens": 384000,
           "input": ["text"],
           "reasoning": true,
+          "thinkingLevelMap": { "xhigh": "max" },
           "cost": {
             "input": 1.74,
             "output": 3.48,
@@ -37,6 +38,7 @@
           "maxTokens": 384000,
           "input": ["text"],
           "reasoning": true,
+          "thinkingLevelMap": { "xhigh": "max" },
           "cost": {
             "input": 0.14,
             "output": 0.28,
