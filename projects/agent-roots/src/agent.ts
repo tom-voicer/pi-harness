@@ -132,7 +132,14 @@ function extractToolCalls(
   while ((match = fcRe.exec(text)) !== null) {
     try {
       const parsed = JSON.parse(match[1]);
-      if (parsed.name && parsed.arguments) addCall(parsed.name, parsed.arguments);
+      // Handle variants: {name,arguments}, {function,parameters}, {tool,args}
+      const toolName =
+        parsed.name || parsed.function || parsed.tool || parsed.tool_name;
+      const toolArgs =
+        parsed.arguments || parsed.parameters || parsed.args || parsed.params || {};
+      if (toolName && typeof toolName === "string") {
+        addCall(toolName, typeof toolArgs === "object" ? toolArgs : {});
+      }
     } catch { /* skip */ }
   }
 
@@ -188,20 +195,37 @@ function extractXmlTree(
       addCall(key, args);
     }
 
-    // Key is invoke/tool_call with @_name: { invoke: { "@_name": "web_search", ... } }
+    // Key is invoke/tool_call with @_name or child <tool_name>
+    //   { invoke: { "@_name": "web_search", ... } }
+    //   { tool_call: { tool_name: "web_search", tool_arguments: "{...}" } }
     if ((key === "invoke" || key === "tool_call" || key === "call") &&
         value && typeof value === "object") {
-      const toolName = (value as any)["@_name"];
+      // Try @_name attribute first, then tool_name child element
+      let toolName = (value as any)["@_name"] || (value as any)["tool_name"];
+      if (!toolName && typeof (value as any)["#text"] === "string") {
+        toolName = (value as any)["#text"];
+      }
+
       if (toolName && knownTools.has(toolName)) {
         const args: Record<string, any> = {};
+
+        // Check for tool_arguments as JSON string
+        const rawArgs = (value as any)["tool_arguments"];
+        if (typeof rawArgs === "string") {
+          try {
+            Object.assign(args, JSON.parse(rawArgs));
+          } catch { /* fall through to child-element parsing */ }
+        }
+
         for (const [k, v] of Object.entries(value as Record<string, any>)) {
           if (k.startsWith("@_")) continue;
+          if (k === "tool_name" || k === "tool_arguments") continue; // already handled
           if (k === "parameter") {
             const params = Array.isArray(v) ? v : [v];
             for (const p of params) {
               if (p?.["@_name"]) args[p["@_name"]] = p["#text"] ?? "";
             }
-          } else {
+          } else if (k !== "#text") {
             args[k] = typeof v === "string" ? v : (v as any)?.["#text"] ?? String(v);
           }
         }
