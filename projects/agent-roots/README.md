@@ -278,6 +278,8 @@ Tested exclusively with `deepseek/deepseek-v4-flash` (configured in `~/.pi/agent
 
 ## Development
 
+> **AGENTS.md**: This project has an `AGENTS.md` that tells coding agents to keep the README updated after every code change. Read it.
+
 ### Running locally
 
 ```bash
