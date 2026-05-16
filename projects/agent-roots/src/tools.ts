@@ -7,7 +7,6 @@ import {
   createFindTool,
   createLsTool,
   defineTool,
-  AuthStorage,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -33,20 +32,11 @@ export const AVAILABLE_TOOLS = [
 ] as const;
 
 function getTavilyKey(): string {
-  // 1. Check environment variable
-  const envKey = process.env.TAVILY_API_KEY;
-  if (envKey) return envKey;
-
-  // 2. Check pi's auth storage (~/.pi/agent/auth.json)
-  try {
-    const auth = AuthStorage.create();
-    // AuthStorage stores keys by provider; Tavily might be stored as "tavily"
-    const stored = (auth as any).getApiKey?.("tavily");
-    if (stored) return stored;
-  } catch { /* auth storage might not have tavily */ }
+  const key = process.env.TAVILY_API_KEY;
+  if (key) return key;
 
   throw new Error(
-    "TAVILY_API_KEY not set. Export it in your shell profile or add it to ~/.pi/agent/auth.json under provider \"tavily\".",
+    "TAVILY_API_KEY not set. Get a key at https://tavily.com and run: export TAVILY_API_KEY=tvly-...",
   );
 }
 
