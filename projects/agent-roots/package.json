@@ -1,0 +1,22 @@
+{
+  "name": "agent-roots",
+  "version": "0.1.0",
+  "description": "Recursive agent delegation CLI — bounded tree of AI agents collaborating on complex tasks",
+  "type": "module",
+  "bin": {
+    "roots": "./bin/roots"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.74.0",
+    "typebox": "^1.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}

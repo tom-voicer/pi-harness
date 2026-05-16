@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+# Resolve the real script location (follow symlinks)
+SCRIPT="$0"
+while [ -L "$SCRIPT" ]; do
+  TARGET="$(readlink "$SCRIPT")"
+  case "$TARGET" in
+    /*) SCRIPT="$TARGET" ;;
+    *)  SCRIPT="$(dirname "$SCRIPT")/$TARGET" ;;
+  esac
+done
+PROJECT_DIR="$(cd "$(dirname "$SCRIPT")/.." && pwd -P)"
+exec "$PROJECT_DIR/node_modules/.bin/tsx" "$PROJECT_DIR/src/cli.ts" "$@"
