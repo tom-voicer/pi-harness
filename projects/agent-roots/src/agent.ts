@@ -267,6 +267,31 @@ export async function runAgent(
     resourceLoader: loader,
   });
 
+  // Log tool calls via session events (works with models that support native tool calling)
+  const node = treeState.nodes.get(nodeId);
+  session.subscribe((event: any) => {
+    if (event.type === "tool_execution_start" && node) {
+      node.toolCalls.push({
+        name: event.toolName,
+        success: false,
+        timestamp: Date.now(),
+      });
+    }
+    if (event.type === "tool_execution_end" && node) {
+      for (let i = node.toolCalls.length - 1; i >= 0; i--) {
+        const tc = node.toolCalls[i];
+        if (tc.name === event.toolName && !tc.success && !tc.error) {
+          tc.success = !event.isError;
+          if (event.isError) {
+            tc.error =
+              event.result?.content?.[0]?.text?.slice(0, 60) || "tool error";
+          }
+          break;
+        }
+      }
+    }
+  });
+
   const budget = { value: maxAgents };
   let currentPrompt = prompt;
 
