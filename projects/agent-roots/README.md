@@ -50,11 +50,11 @@ The budget is the **maximum number of successful subagent spawns**. Currently, b
 
 ### Leaf agents (budget = 1)
 
-Leaf agents receive a simplified system prompt. They have no delegation capability — they just answer the prompt directly. This is enforced structurally: the delegation extraction code only runs when `maxAgents > 1`.
+Leaf agents receive a system prompt that casts them as an **expert planning and research agent** — goal-oriented, meticulous, and holding themselves to the highest quality standards. They have no delegation capability and must answer directly. The delegation extraction code only runs when `maxAgents > 1`.
 
 ### Coordinator agents (budget > 1)
 
-Coordinator agents receive pi's default system prompt. All delegation logic lives in the **user prompt** (`buildUserPrompt()`), which is the authoritative instruction channel. It contains:
+Coordinator agents receive a system prompt that casts them as an **expert planning and orchestration agent** — strategic decomposers who plan backward from the ideal outcome. All delegation mechanics live in the **user prompt** (`buildUserPrompt()`), which is the authoritative instruction channel. It contains:
 
 - A **two-tier escalation ladder** (32 examples): 10 trivially-single-fact tasks → answer directly; 22 everything-else tasks → delegate with explicit split strategies
 - A **plan-first** directive: identify independent subtopics before outputting
@@ -212,8 +212,8 @@ Every agent (root, coordinator, leaf) gets a roots-specific system prompt via `b
 **Why**: pi's default system prompt is designed for a coding agent harness — it mentions pi SDK documentation, extension APIs, TUI components, and other pi-internal references. Roots agents are research/deliberation agents, not coding agents. Sending them pi's coding-agent system prompt wastes tokens, confuses identity ("you're a coding assistant but you can't edit files"), and may bias responses toward coding metaphors.
 
 **Implementation**: `runAgent()` creates a `DefaultResourceLoader` per agent with `systemPromptOverride: () => buildSystemPrompt(maxAgents, toolNames)`. This produces:
-- **Leaf agents**: "You are a focused research agent operating as a leaf node in a delegation tree." + tools table + research guidelines.
-- **Coordinator agents**: "You are a coordinator agent with N subagent spawns available." + tools table + delegation-aware guidelines.
+- **Leaf agents**: "You are an expert planning and research agent — a leaf node in a delegation tree." + planning character (goal-oriented, meticulous, never cuts corners) + tools table + guidelines.
+- **Coordinator agents**: "You are an expert planning and orchestration agent with N subagent spawns available." + strategic decomposition character (plan backward, demanding delegator, thorough synthesizer) + tools table + guidelines.
 
 All delegation mechanics (format, escalation ladder, tool rules, subagent prompt writing criteria) live exclusively in `buildUserPrompt()` — the system prompt is identity + guidelines only.
 
