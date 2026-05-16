@@ -6,17 +6,10 @@ import {
   SessionManager,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { XMLParser } from "fast-xml-parser";
-import type { TreeState, RunConfig, SubagentTask, ToolCallRecord } from "./types.js";
+import type { TreeState, RunConfig, SubagentTask } from "./types.js";
 import { addNode } from "./types.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { resolveTools } from "./tools.js";
-
-const xmlParser = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: "@_",
-  isArray: () => false,
-});
 
 let _authStorage: AuthStorage | null = null;
 let _modelRegistry: ModelRegistry | null = null;
@@ -38,6 +31,7 @@ interface DelegationPlan {
 }
 
 function extractDelegationPlan(text: string): DelegationPlan | null {
+  // Try JSON code fence with "delegate" tag
   const delegateMatch = text.match(
     /```(?:json\s*)?delegate\s*([\s\S]*?)```/i,
   );
@@ -54,6 +48,7 @@ function extractDelegationPlan(text: string): DelegationPlan | null {
           }));
         if (tasks.length > 0) return { tasks };
       }
+      // Old format: { prompts: [...] }
       if (Array.isArray(parsed.prompts)) {
         const tasks = parsed.prompts
           .filter((p: any) => typeof p === "string")
@@ -63,6 +58,7 @@ function extractDelegationPlan(text: string): DelegationPlan | null {
     } catch { /* fall through */ }
   }
 
+  // Try DeepSeek <function-call> format
   const fcMatch = text.match(
     /<function-call>\s*(\{[\s\S]*?\})\s*<\/function-call>/i,
   );
@@ -79,6 +75,7 @@ function extractDelegationPlan(text: string): DelegationPlan | null {
     } catch { /* fall through */ }
   }
 
+  // Try bare JSON array of {name, prompt} objects
   const jsonBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (jsonBlockMatch) {
     try {
@@ -97,200 +94,6 @@ function extractDelegationPlan(text: string): DelegationPlan | null {
   }
 
   return null;
-}
-
-// Extract individual tool calls from model text output.
-// DeepSeek outputs tool calls as text in several formats depending on
-// model variant, thinking level, and API compat mode. We handle all of them:
-//
-//   1. <function-call>{"name":"...","arguments":{...}}</function-call>
-//   2. DSML: <｜DSML｜tool_calls>call:web_search{"query":"..."}…</｜DSML｜tool_calls>
-//   3. standalone: call:web_search{"query":"..."}
-//   4. XML attributes: <read file="x"></read> or <web_search query="x" />
-//   5. XML child-elements: <web_search><query>x</query></web_search>
-//   6. pi-native: <invoke name="web_search"><parameter name="q">x</parameter></invoke>
-//   7. pi-native v2: <tool_call name="web_search"><query>x</query></tool_call>
-function extractToolCalls(
-  text: string,
-  knownTools: Set<string>,
-): Array<{ name: string; args: Record<string, any> }> {
-  if (knownTools.size === 0) return [];
-  const calls: Array<{ name: string; args: Record<string, any> }> = [];
-  const seen = new Set<string>();
-
-  const addCall = (name: string, args: Record<string, any>) => {
-    const sig = name + JSON.stringify(args);
-    if (!seen.has(sig) && knownTools.has(name)) {
-      seen.add(sig);
-      calls.push({ name, args });
-    }
-  };
-
-  // Format 1: <function-call> JSON blocks
-  const fcRe = /<function-call>\s*(\{[\s\S]*?\})\s*<\/function-call>/gi;
-  let match;
-  while ((match = fcRe.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1]);
-      // Handle variants: {name,arguments}, {function,parameters}, {tool,args}
-      const toolName =
-        parsed.name || parsed.function || parsed.tool || parsed.tool_name;
-      const toolArgs =
-        parsed.arguments || parsed.parameters || parsed.args || parsed.params || {};
-      if (toolName && typeof toolName === "string") {
-        addCall(toolName, typeof toolArgs === "object" ? toolArgs : {});
-      }
-    } catch { /* skip */ }
-  }
-
-  // Format 2 & 3: DSML and standalone call:tool{json} syntax
-  //   <｜DSML｜tool_calls>call:search{"q":"x"}…</｜DSML｜tool_calls>
-  //   call:read{"path":"x"}
-  // The ｜ is Unicode U+FF5C (FULLWIDTH VERTICAL LINE)
-  const callRe = /call:(\w+)\s*(\{[^}]*\})/gi;
-  while ((match = callRe.exec(text)) !== null) {
-    try {
-      const args = JSON.parse(match[2]);
-      addCall(match[1], args);
-    } catch { /* skip */ }
-  }
-
-  // Format 4-7: General XML blocks
-  // Find XML blocks, parse with fast-xml-parser, walk for tool invocations
-  const xmlBlockRe = /<([\w-]+)[^>]*>[\s\S]*?<\/\1>/gi;
-  const blocks = new Set<string>();
-  while ((match = xmlBlockRe.exec(text)) !== null) blocks.add(match[0]);
-
-  for (const block of blocks) {
-    let mentionsKnownTool = false;
-    for (const t of knownTools) {
-      if (block.includes(t)) { mentionsKnownTool = true; break; }
-    }
-    if (!mentionsKnownTool) continue;
-
-    try {
-      const parsed = xmlParser.parse(block);
-      extractXmlTree(parsed, knownTools, addCall);
-    } catch { /* skip */ }
-  }
-
-  return calls;
-}
-
-function extractXmlTree(
-  obj: any,
-  knownTools: Set<string>,
-  addCall: (name: string, args: Record<string, any>) => void,
-): void {
-  if (!obj || typeof obj !== "object") return;
-
-  for (const [key, value] of Object.entries(obj)) {
-    // Key IS a known tool name: { web_search: { "@_query": "..." } }
-    if (knownTools.has(key) && value && typeof value === "object") {
-      const args: Record<string, any> = {};
-      for (const [k, v] of Object.entries(value as Record<string, any>)) {
-        if (k.startsWith("@_")) args[k.slice(2)] = v;
-        else if (k !== "#text") args[k] = typeof v === "string" ? v : (v as any)?.["#text"] ?? String(v);
-      }
-      addCall(key, args);
-    }
-
-    // Key is invoke/tool_call with @_name or child <tool_name>
-    //   { invoke: { "@_name": "web_search", ... } }
-    //   { tool_call: { tool_name: "web_search", tool_arguments: "{...}" } }
-    if ((key === "invoke" || key === "tool_call" || key === "call") &&
-        value && typeof value === "object") {
-      // Try @_name attribute first, then tool_name child element
-      let toolName = (value as any)["@_name"] || (value as any)["tool_name"];
-      if (!toolName && typeof (value as any)["#text"] === "string") {
-        toolName = (value as any)["#text"];
-      }
-
-      if (toolName && knownTools.has(toolName)) {
-        const args: Record<string, any> = {};
-
-        // Check for tool_arguments as JSON string
-        const rawArgs = (value as any)["tool_arguments"];
-        if (typeof rawArgs === "string") {
-          try {
-            Object.assign(args, JSON.parse(rawArgs));
-          } catch { /* fall through to child-element parsing */ }
-        }
-
-        for (const [k, v] of Object.entries(value as Record<string, any>)) {
-          if (k.startsWith("@_")) continue;
-          if (k === "tool_name" || k === "tool_arguments") continue; // already handled
-          if (k === "parameter") {
-            const params = Array.isArray(v) ? v : [v];
-            for (const p of params) {
-              if (p?.["@_name"]) args[p["@_name"]] = p["#text"] ?? "";
-            }
-          } else if (k !== "#text") {
-            args[k] = typeof v === "string" ? v : (v as any)?.["#text"] ?? String(v);
-          }
-        }
-        addCall(toolName, args);
-      }
-    }
-
-    // Recurse
-    if (value && typeof value === "object") extractXmlTree(value, knownTools, addCall);
-  }
-}
-
-type ToolInstance = { execute: (...args: any[]) => Promise<any> };
-
-// Common parameter name aliases for built-in tools (models sometimes guess wrong)
-const PARAM_ALIASES: Record<string, Record<string, string>> = {
-  read: { file: "path", file_path: "path" },
-  write: { file: "path", file_path: "path" },
-  edit: { file: "path", file_path: "path" },
-  bash: { cmd: "command", run: "command" },
-  grep: { regex: "pattern", query: "pattern" },
-  find: { glob: "pattern", query: "pattern" },
-  ls: { dir: "path", directory: "path" },
-};
-
-function normalizeArgs(name: string, args: Record<string, any>): Record<string, any> {
-  const aliases = PARAM_ALIASES[name];
-  if (!aliases) return args;
-  const normalized = { ...args };
-  for (const [alias, canonical] of Object.entries(aliases)) {
-    if (alias in normalized && !(canonical in normalized)) {
-      normalized[canonical] = normalized[alias];
-    }
-  }
-  return normalized;
-}
-
-async function executeToolByName(
-  name: string,
-  args: Record<string, any>,
-  toolMap: Map<string, ToolInstance>,
-): Promise<{ content: string; isError: boolean }> {
-  const tool = toolMap.get(name);
-  if (!tool) {
-    return { content: `Tool "${name}" not found. Available: ${[...toolMap.keys()].join(", ")}`, isError: true };
-  }
-  try {
-    const result = await tool.execute(`call_${Date.now()}`, args, undefined as any, undefined as any, {} as any);
-    const text = result?.content?.map((c: any) => c.text).join("\n") || JSON.stringify(result);
-    return { content: text, isError: result?.isError || false };
-  } catch (err: any) {
-    return { content: err?.message || String(err), isError: true };
-  }
-}
-
-function formatToolResults(
-  results: Array<{ name: string; args: Record<string, any>; content: string; isError: boolean }>,
-): string {
-  let text = "Tool results:\n\n";
-  for (const r of results) {
-    const icon = r.isError ? "✗" : "✓";
-    text += `[${icon}] ${r.name}(${JSON.stringify(r.args)}):\n${r.content}\n\n`;
-  }
-  text += "Continue based on these results.";
-  return text;
 }
 
 function validateTools(
@@ -464,48 +267,11 @@ export async function runAgent(
     resourceLoader: loader,
   });
 
-  // Track tool calls for the tree display
-  const node = treeState.nodes.get(nodeId);
-  session.subscribe((event: any) => {
-    if (event.type === "tool_execution_start" && node) {
-      const existing = node.toolCalls.find(
-        (tc) => tc.name === event.toolName && !tc.success && !tc.error,
-      );
-      if (!existing) {
-        node.toolCalls.push({
-          name: event.toolName,
-          success: false, // will be updated on end
-          timestamp: Date.now(),
-        });
-      }
-    }
-    if (event.type === "tool_execution_end" && node) {
-      // Update the last matching pending call
-      for (let i = node.toolCalls.length - 1; i >= 0; i--) {
-        const tc = node.toolCalls[i];
-        if (tc.name === event.toolName && !tc.success && !tc.error) {
-          tc.success = !event.isError;
-          if (event.isError) {
-            tc.error =
-              event.result?.content?.[0]?.text?.slice(0, 60) ||
-              "tool error";
-          }
-          break;
-        }
-      }
-    }
-  });
-
   const budget = { value: maxAgents };
   let currentPrompt = prompt;
 
-  // Build tool lookup map for text-based tool execution
-  const toolMap = new Map<string, ToolInstance>();
-  for (const t of builtin) toolMap.set(t.name, t as any);
-  for (const t of custom) toolMap.set(t.name, t as any);
-
   try {
-    for (let turn = 0; turn < 10; turn++) {
+    for (let turn = 0; turn < 5; turn++) {
       if (signal.aborted) throw new Error("Aborted");
 
       let response = "";
@@ -527,7 +293,7 @@ export async function runAgent(
 
       response = response.trim();
 
-      // 1. Check for delegation plan (if budget allows)
+      // Check for delegation plan
       if (maxAgents > 1 && budget.value > 0) {
         const plan = extractDelegationPlan(response);
 
@@ -538,7 +304,7 @@ export async function runAgent(
           const results = await executeSubagents(
             cappedTasks,
             childBudget,
-            toolNames,
+            toolNames, // parent tools are the valid set for children
             treeState,
             nodeId,
             config,
@@ -551,40 +317,12 @@ export async function runAgent(
         }
       }
 
-      // 2. Check for tool calls (text-based, for DeepSeek compat)
-      const toolCalls = extractToolCalls(response, new Set(toolNames));
-      if (toolCalls.length > 0) {
-        const results = await Promise.all(
-          toolCalls.map(async (tc) => {
-            const { content, isError } = await executeToolByName(
-              tc.name,
-              normalizeArgs(tc.name, tc.args),
-              toolMap,
-            );
-            // Track in node for tree display
-            if (node) {
-              node.toolCalls.push({
-                name: tc.name,
-                success: !isError,
-                error: isError ? content.slice(0, 60) : undefined,
-                timestamp: Date.now(),
-              });
-            }
-            return { name: tc.name, args: tc.args, content, isError };
-          }),
-        );
-
-        currentPrompt = formatToolResults(results);
-        continue;
-      }
-
-      // 3. No delegation or tool calls — final response
       session.dispose();
       return response;
     }
 
     session.dispose();
-    return "(Max turns exceeded)";
+    return "(Max delegation turns exceeded)";
   } catch (err: any) {
     session.dispose();
     throw err;
