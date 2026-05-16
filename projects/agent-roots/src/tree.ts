@@ -1,4 +1,5 @@
 import type { AgentNode, TreeState } from "./types.js";
+import { writeStdout } from "./stdout.js";
 
 const STATUS_ICONS: Record<string, string> = {
   pending: "⏳",
@@ -155,12 +156,18 @@ let previousTreeText = "";
 export function liveRender(state: TreeState): void {
   const tree = renderTreeText(state);
 
-  // No subagents yet, show simple status line
+  // No subagents yet — show a compact status line at the top
   if (!tree) {
-    if (previousLineCount > 0) {
-      process.stdout.write(`\x1b[${previousLineCount}A\x1b[J`);
-      previousLineCount = 0;
-      previousTreeText = "";
+    const root = state.rootId ? state.nodes.get(state.rootId) : null;
+    if (root) {
+      const statusLine = `\x1b[1m🌳 roots\x1b[0m  \x1b[2mbudget=${root.maxAgents}\x1b[0m` +
+        (root.toolNames.length > 0 ? ` \x1b[2m[${root.toolNames.join(", ")}]\x1b[0m` : "") +
+        ` \x1b[2m(thinking...)\x1b[0m`;
+      if (statusLine !== previousTreeText) {
+        previousTreeText = statusLine;
+        writeStdout(`\x1b[H\x1b[J${statusLine}\n`);
+        previousLineCount = 2;
+      }
     }
     return;
   }
@@ -169,26 +176,22 @@ export function liveRender(state: TreeState): void {
   if (tree === previousTreeText) return;
   previousTreeText = tree;
 
-  const newLines = tree.split("\n").length;
-
-  if (previousLineCount > 0) {
-    process.stdout.write(`\x1b[${previousLineCount}A\x1b[J`);
-  }
-
-  process.stdout.write(tree + "\n");
-  previousLineCount = newLines + 1; // +1 for newline
+  // Use absolute positioning to avoid cursor drift from interleaved output
+  writeStdout(`\x1b[H\x1b[J`);
+  writeStdout(tree + "\n");
+  previousLineCount = tree.split("\n").length + 1;
 }
 
 export function finalRender(state: TreeState): void {
   // Clear live render area
   if (previousLineCount > 0) {
-    process.stdout.write(`\x1b[${previousLineCount}A\x1b[J`);
+    writeStdout(`\x1b[${previousLineCount}A\x1b[J`);
     previousLineCount = 0;
     previousTreeText = "";
   }
 
   const tree = renderTreeText(state);
   if (tree) {
-    process.stdout.write(tree + "\n\n");
+    writeStdout(tree + "\n\n");
   }
 }

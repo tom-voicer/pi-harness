@@ -2,6 +2,7 @@ import { addNode, createTreeState, type RunConfig } from "./types.js";
 import { runAgent } from "./agent.js";
 import { liveRender, finalRender } from "./tree.js";
 import { AVAILABLE_TOOLS } from "./tools.js";
+import { guardStdout, releaseStdout } from "./stdout.js";
 
 function parseArgs(): {
   maxAgents: number;
@@ -118,6 +119,10 @@ export async function main() {
     liveRender(treeState);
   }, 250);
 
+  // Guard stdout: suppress SDK leakage during session.prompt() calls,
+  // but let tree rendering through (it uses writeStdout directly).
+  guardStdout();
+
   // Run the agent tree
   const signal = new AbortController().signal;
   rootNode.status = "running";
@@ -147,6 +152,9 @@ export async function main() {
 
   // Stop live rendering
   clearInterval(renderInterval);
+
+  // Restore stdout for final answer output
+  releaseStdout();
 
   // Print final tree and output
   finalRender(treeState);
