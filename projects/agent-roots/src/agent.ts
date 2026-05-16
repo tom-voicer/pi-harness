@@ -6,7 +6,7 @@ import {
   SessionManager,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import type { TreeState, RunConfig, SubagentTask } from "./types.js";
+import type { TreeState, RunConfig, SubagentTask, ToolCallRecord } from "./types.js";
 import { addNode } from "./types.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { resolveTools } from "./tools.js";
@@ -31,7 +31,6 @@ interface DelegationPlan {
 }
 
 function extractDelegationPlan(text: string): DelegationPlan | null {
-  // Try JSON code fence with "delegate" tag
   const delegateMatch = text.match(
     /```(?:json\s*)?delegate\s*([\s\S]*?)```/i,
   );
@@ -48,7 +47,6 @@ function extractDelegationPlan(text: string): DelegationPlan | null {
           }));
         if (tasks.length > 0) return { tasks };
       }
-      // Old format: { prompts: [...] }
       if (Array.isArray(parsed.prompts)) {
         const tasks = parsed.prompts
           .filter((p: any) => typeof p === "string")
@@ -58,7 +56,6 @@ function extractDelegationPlan(text: string): DelegationPlan | null {
     } catch { /* fall through */ }
   }
 
-  // Try DeepSeek <function-call> format
   const fcMatch = text.match(
     /<function-call>\s*(\{[\s\S]*?\})\s*<\/function-call>/i,
   );
@@ -75,7 +72,6 @@ function extractDelegationPlan(text: string): DelegationPlan | null {
     } catch { /* fall through */ }
   }
 
-  // Try bare JSON array of {name, prompt} objects
   const jsonBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (jsonBlockMatch) {
     try {
@@ -94,6 +90,121 @@ function extractDelegationPlan(text: string): DelegationPlan | null {
   }
 
   return null;
+}
+
+// Extract individual tool calls from DeepSeek text output.
+// Handles two formats:
+//   1. <function-call>{"name":"...","arguments":{...}}</function-call>
+//   2. <toolname><param>value</param></toolname>  (XML-style, specific to known tools)
+function extractToolCalls(
+  text: string,
+  knownTools: Set<string>,
+): Array<{ name: string; args: Record<string, any> }> {
+  const calls: Array<{ name: string; args: Record<string, any> }> = [];
+
+  // Format 1: <function-call> JSON blocks
+  const fcRe = /<function-call>\s*(\{[\s\S]*?\})\s*<\/function-call>/gi;
+  let match;
+  while ((match = fcRe.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      if (parsed.name && parsed.arguments) {
+        calls.push({ name: parsed.name, args: parsed.arguments });
+      }
+    } catch { /* skip */ }
+  }
+
+  // Format 2: <toolname><param>value</param></toolname>  XML-style
+  // Also handles: <toolname attr="value" />  HTML-attribute style
+  // Only match tool names we know about
+  if (knownTools.size > 0) {
+    const toolPattern = [...knownTools].join("|");
+
+    // XML child-element style: <read><path>file.txt</path></read>
+    const xmlRe = new RegExp(
+      `<(${toolPattern})\\b[^>]*>([\\s\\S]*?)<\\/\\1>`,
+      "gi",
+    );
+    while ((match = xmlRe.exec(text)) !== null) {
+      const toolName = match[1];
+      const inner = match[2].trim();
+      if (calls.some((c) => c.name === toolName)) continue;
+
+      const args: Record<string, any> = {};
+      // Try child-element params
+      const paramRe = /<(\w+)>([\s\S]*?)<\/\1>/gi;
+      let pm;
+      while ((pm = paramRe.exec(inner)) !== null) {
+        args[pm[1]] = pm[2].trim();
+      }
+      // Also try attribute-style params: attr="value"
+      if (Object.keys(args).length === 0) {
+        const attrRe = /(\w+)="([^"]*)"/gi;
+        let am;
+        while ((am = attrRe.exec(inner)) !== null) {
+          args[am[1]] = am[2];
+        }
+      }
+      calls.push({ name: toolName, args });
+    }
+  }
+
+  return calls;
+}
+
+type ToolInstance = { execute: (...args: any[]) => Promise<any> };
+
+// Common parameter name aliases for built-in tools (models sometimes guess wrong)
+const PARAM_ALIASES: Record<string, Record<string, string>> = {
+  read: { file: "path", file_path: "path" },
+  write: { file: "path", file_path: "path" },
+  edit: { file: "path", file_path: "path" },
+  bash: { cmd: "command", run: "command" },
+  grep: { regex: "pattern", query: "pattern" },
+  find: { glob: "pattern", query: "pattern" },
+  ls: { dir: "path", directory: "path" },
+};
+
+function normalizeArgs(name: string, args: Record<string, any>): Record<string, any> {
+  const aliases = PARAM_ALIASES[name];
+  if (!aliases) return args;
+  const normalized = { ...args };
+  for (const [alias, canonical] of Object.entries(aliases)) {
+    if (alias in normalized && !(canonical in normalized)) {
+      normalized[canonical] = normalized[alias];
+    }
+  }
+  return normalized;
+}
+
+async function executeToolByName(
+  name: string,
+  args: Record<string, any>,
+  toolMap: Map<string, ToolInstance>,
+): Promise<{ content: string; isError: boolean }> {
+  const tool = toolMap.get(name);
+  if (!tool) {
+    return { content: `Tool "${name}" not found. Available: ${[...toolMap.keys()].join(", ")}`, isError: true };
+  }
+  try {
+    const result = await tool.execute(`call_${Date.now()}`, args, undefined as any, undefined as any, {} as any);
+    const text = result?.content?.map((c: any) => c.text).join("\n") || JSON.stringify(result);
+    return { content: text, isError: result?.isError || false };
+  } catch (err: any) {
+    return { content: err?.message || String(err), isError: true };
+  }
+}
+
+function formatToolResults(
+  results: Array<{ name: string; args: Record<string, any>; content: string; isError: boolean }>,
+): string {
+  let text = "Tool results:\n\n";
+  for (const r of results) {
+    const icon = r.isError ? "✗" : "✓";
+    text += `[${icon}] ${r.name}(${JSON.stringify(r.args)}):\n${r.content}\n\n`;
+  }
+  text += "Continue based on these results.";
+  return text;
 }
 
 function validateTools(
@@ -302,8 +413,13 @@ export async function runAgent(
   const budget = { value: maxAgents };
   let currentPrompt = prompt;
 
+  // Build tool lookup map for text-based tool execution
+  const toolMap = new Map<string, ToolInstance>();
+  for (const t of builtin) toolMap.set(t.name, t as any);
+  for (const t of custom) toolMap.set(t.name, t as any);
+
   try {
-    for (let turn = 0; turn < 5; turn++) {
+    for (let turn = 0; turn < 10; turn++) {
       if (signal.aborted) throw new Error("Aborted");
 
       let response = "";
@@ -325,7 +441,7 @@ export async function runAgent(
 
       response = response.trim();
 
-      // Check for delegation plan
+      // 1. Check for delegation plan (if budget allows)
       if (maxAgents > 1 && budget.value > 0) {
         const plan = extractDelegationPlan(response);
 
@@ -336,7 +452,7 @@ export async function runAgent(
           const results = await executeSubagents(
             cappedTasks,
             childBudget,
-            toolNames, // parent tools are the valid set for children
+            toolNames,
             treeState,
             nodeId,
             config,
@@ -349,12 +465,40 @@ export async function runAgent(
         }
       }
 
+      // 2. Check for tool calls (text-based, for DeepSeek compat)
+      const toolCalls = extractToolCalls(response, new Set(toolNames));
+      if (toolCalls.length > 0) {
+        const results = await Promise.all(
+          toolCalls.map(async (tc) => {
+            const { content, isError } = await executeToolByName(
+              tc.name,
+              normalizeArgs(tc.name, tc.args),
+              toolMap,
+            );
+            // Track in node for tree display
+            if (node) {
+              node.toolCalls.push({
+                name: tc.name,
+                success: !isError,
+                error: isError ? content.slice(0, 60) : undefined,
+                timestamp: Date.now(),
+              });
+            }
+            return { name: tc.name, args: tc.args, content, isError };
+          }),
+        );
+
+        currentPrompt = formatToolResults(results);
+        continue;
+      }
+
+      // 3. No delegation or tool calls — final response
       session.dispose();
       return response;
     }
 
     session.dispose();
-    return "(Max delegation turns exceeded)";
+    return "(Max turns exceeded)";
   } catch (err: any) {
     session.dispose();
     throw err;
