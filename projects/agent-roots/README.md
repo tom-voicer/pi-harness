@@ -83,7 +83,7 @@ agent-roots/
 ├── src/
 │   ├── cli.ts             # Argument parsing, main(), tree rendering timer
 │   ├── agent.ts           # runAgent(), extractDelegationPlan(), executeSubagents()
-│   ├── prompt.ts          # buildSystemPrompt(): leaf vs coordinator
+│   ├── prompt.ts          # buildSystemPrompt(): leaf vs coordinator system prompts
 │   ├── tree.ts            # renderTreeText(), liveRender(), finalRender()
 │   └── types.ts           # AgentNode, TreeState, SubagentTask, RunConfig
 ├── package.json
@@ -104,10 +104,11 @@ CLI (cli.ts)
   └─ runAgent(prompt, maxAgents, tree, rootNode.id, config, signal)
        │
        ├─ 1. Auto-detect model (ModelRegistry.getAvailable())
-       ├─ 2. Build user prompt (escalation ladder, delegation instructions)
-       ├─ 3. Create SDK session (in-memory, pi native defaults)
+       ├─ 2. Build system prompt via DefaultResourceLoader (replaces pi defaults)
+       ├─ 3. Build user prompt (escalation ladder, delegation instructions)
+       ├─ 4. Create SDK session (in-memory, roots-specific system prompt)
        │
-       └─ 4. Multi-turn loop (max 10 turns):
+       └─ 5. Multi-turn loop (max 10 turns):
             ├─ session.prompt(currentPrompt) → collect response
             ├─ extractDelegationPlan(response)
             │    ├─ Found? → executeSubagents() in parallel
@@ -141,7 +142,7 @@ The loop supports agents that want to delegate in multiple rounds (though in pra
 - Each agent gets a **fresh, in-memory SDK session** (`SessionManager.inMemory()`)
 - No session persistence — agents don't write to disk
 - Tools are passed via `-t/--tools` flag; coordinators can grant subsets to subagents
-- System prompt uses pi native defaults (no override)
+- System prompt is **replaced** (not pi's coding-agent defaults). `buildSystemPrompt()` creates a roots-specific identity: leaf agents get "focused research agent", coordinators get delegation-aware identity with guidelines. See [Design Decision 6](#6-system-prompt-replacement-not-pi-defaults).
 
 ### Model auto-detection
 
@@ -204,7 +205,21 @@ Fixing this requires either:
 - Sequential budget checking (slower)
 - Preallocating budget slots (current approach)
 
-### 5. Shell script entry point (not pure Node.js)
+### 5. System prompt replacement (not pi defaults)
+
+Every agent (root, coordinator, leaf) gets a roots-specific system prompt via `buildSystemPrompt()` instead of pi's default "expert coding assistant operating inside pi" prompt.
+
+**Why**: pi's default system prompt is designed for a coding agent harness — it mentions pi SDK documentation, extension APIs, TUI components, and other pi-internal references. Roots agents are research/deliberation agents, not coding agents. Sending them pi's coding-agent system prompt wastes tokens, confuses identity ("you're a coding assistant but you can't edit files"), and may bias responses toward coding metaphors.
+
+**Implementation**: `runAgent()` creates a `DefaultResourceLoader` per agent with `systemPromptOverride: () => buildSystemPrompt(maxAgents, toolNames)`. This produces:
+- **Leaf agents**: "You are a focused research agent operating as a leaf node in a delegation tree." + tools table + research guidelines.
+- **Coordinator agents**: "You are a coordinator agent with N subagent spawns available." + tools table + delegation-aware guidelines.
+
+All delegation mechanics (format, escalation ladder, tool rules, subagent prompt writing criteria) live exclusively in `buildUserPrompt()` — the system prompt is identity + guidelines only.
+
+**Trade-off**: `DefaultResourceLoader` still discovers and injects AGENTS.md context files and skills from the project/global hierarchy (pi's `buildSystemPrompt()` appends these even with a custom prompt). This is generally harmless (roots agents can't use skills without a read tool) but means a large project AGENTS.md could bloat every agent's context. See [Gotcha: AGENTS.md and skills leak into agent context](#agentsmd-and-skills-leak-into-agent-context).
+
+### 6. Shell script entry point (not pure Node.js)
 
 The `bin/roots` entry is a shell script that resolves symlinks and calls `tsx`. Why not `#!/usr/bin/env node`?
 - `npm link` creates a symlink chain: `/opt/homebrew/bin/roots` → `node_modules/agent-roots/bin/roots` → actual file
@@ -263,6 +278,16 @@ pi bundles `typebox@1.1.38`. The package.json must use `^1.1.0`, not `^2.0.0` (w
 ### DefaultResourceLoader needs agentDir
 
 Without `agentDir`, `DefaultResourceLoader` throws `"path" argument must be of type string`. Always pass `getAgentDir()` from `@earendil-works/pi-coding-agent`.
+
+### AGENTS.md and skills leak into agent context
+
+**Problem**: `DefaultResourceLoader` discovers AGENTS.md files from cwd/parent dirs and skills from `~/.pi/agent/skills/` / `~/.agents/skills/`. Even with `systemPromptOverride`, pi's `buildSystemPrompt()` appends these as `# Project Context` and `<available_skills>` sections.
+
+**Symptom**: Every agent in the tree gets the project's AGENTS.md injected into its system prompt, plus any globally-installed skill descriptions. For roots agents (research/deliberation), this is noise — they can't use skills without a read tool, and AGENTS.md instructions like "keep README updated" are irrelevant.
+
+**Current impact**: Minimal for most use cases. AGENTS.md files are typically small, and agents ignore skills they can't load. However, if `roots` is run from a directory with a large/complex AGENTS.md, every subagent's context is inflated.
+
+**Future fix**: Use a custom `ResourceLoader` that suppresses context file and skill discovery, or configure `DefaultResourceLoader` to skip them.
 
 ---
 

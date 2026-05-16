@@ -1,12 +1,15 @@
 import {
   AuthStorage,
   createAgentSession,
+  DefaultResourceLoader,
+  getAgentDir,
   ModelRegistry,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import type { TreeState, RunConfig, SubagentTask } from "./types.js";
 import { addNode } from "./types.js";
 import { resolveTools } from "./tools.js";
+import { buildSystemPrompt } from "./prompt.js";
 
 let _authStorage: AuthStorage | null = null;
 let _modelRegistry: ModelRegistry | null = null;
@@ -333,7 +336,16 @@ export async function runAgent(
 
   const { custom } = resolveTools(toolNames, config.cwd);
 
-  // Minimal session: pi defaults, no prompt manipulation
+  // Replace pi's default system prompt with a roots-specific one.
+  // Every agent (root, coordinator, leaf) gets buildSystemPrompt()
+  // keyed on its maxAgents and toolNames.
+  const loader = new DefaultResourceLoader({
+    cwd: config.cwd,
+    agentDir: getAgentDir(),
+    systemPromptOverride: () => buildSystemPrompt(maxAgents, toolNames),
+  });
+  await loader.reload();
+
   const { session } = await createAgentSession({
     cwd: config.cwd,
     sessionManager: SessionManager.inMemory(),
@@ -343,6 +355,7 @@ export async function runAgent(
     thinkingLevel: (config.thinkingLevel as any) ?? "high",
     tools: toolNames,
     customTools: custom,
+    resourceLoader: loader,
   });
 
   const budget = { value: maxAgents };
