@@ -267,9 +267,9 @@ export async function runAgent(
     resourceLoader: loader,
   });
 
-  // Log tool calls via session events (works with models that support native tool calling)
+  // Log tool calls via session events
   const node = treeState.nodes.get(nodeId);
-  session.subscribe((event: any) => {
+  const toolSub = session.subscribe((event: any) => {
     if (event.type === "tool_execution_start" && node) {
       node.toolCalls.push({
         name: event.toolName,
