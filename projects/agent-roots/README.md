@@ -57,8 +57,9 @@ Leaf agents receive a simplified system prompt. They have no delegation capabili
 Coordinator agents receive a system prompt that explains:
 - Their delegation budget
 - The ` ```delegate ``` ` JSON format for spawning subagents
-- Guidelines for when to delegate vs. answer directly
 - How to synthesize subagent results
+
+Agents **must delegate** — there is no direct-answer fallback at the coordinator level. The user prompt (built by `buildUserPrompt()`) frames the task as a delegation requirement with structured rules: subagent prompts must be detailed, self-contained, and goal-oriented, and the agent must output _only_ the delegate block.
 
 ### The tree
 
@@ -108,7 +109,7 @@ CLI (cli.ts)
             ├─ extractDelegationPlan(response)
             │    ├─ Found? → executeSubagents() in parallel
             │    │            └─ runAgent() recursively for each
-            │    └─ Not found? → return response (final answer)
+            │    └─ Not found? → return response as-is (no delegation parsed)
             └─ Feed subagent results back as next prompt
 ```
 
@@ -126,7 +127,7 @@ CLI (cli.ts)
 
 Each agent runs in a single SDK session with up to 5 turns:
 
-1. **Turn 1**: Agent receives the prompt, outputs a delegate block (or answers directly)
+1. **Turn 1**: Agent receives the prompt, outputs a delegate block
 2. **Orchestrator**: Parses the block, spawns subagents, collects results
 3. **Turn 2**: Agent receives subagent results, synthesizes final answer
 
