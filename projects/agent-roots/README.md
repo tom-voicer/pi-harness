@@ -54,12 +54,14 @@ Leaf agents receive a simplified system prompt. They have no delegation capabili
 
 ### Coordinator agents (budget > 1)
 
-Coordinator agents receive a system prompt that explains:
-- Their delegation budget
-- The ` ```delegate ``` ` JSON format for spawning subagents
-- How to synthesize subagent results
+Coordinator agents receive pi's default system prompt. All delegation logic lives in the **user prompt** (`buildUserPrompt()`), which is the authoritative instruction channel. It contains:
 
-Agents **must delegate** — there is no direct-answer fallback at the coordinator level. The user prompt (built by `buildUserPrompt()`) frames the task as a delegation requirement with structured rules: subagent prompts must be detailed, self-contained, and goal-oriented, and the agent must output _only_ the delegate block.
+- A **two-tier escalation ladder** (32 examples): 10 trivially-single-fact tasks → answer directly; 22 everything-else tasks → delegate with explicit split strategies
+- A **plan-first** directive: identify independent subtopics before outputting
+- A **doubt → delegate** rule: if there's any question whether to delegate, delegate
+- The ` ```delegate ``` ` JSON format for spawning subagents
+- Subagent prompt writing criteria (self-contained, specific, goal-oriented, scoped, tool-aware)
+- Synthesis instructions
 
 ### The tree
 
@@ -101,10 +103,10 @@ CLI (cli.ts)
   └─ runAgent(prompt, maxAgents, tree, rootNode.id, config, signal)
        │
        ├─ 1. Auto-detect model (ModelRegistry.getAvailable())
-       ├─ 2. Build system prompt (leaf vs coordinator)
-       ├─ 3. Create SDK session (in-memory, no built-in tools)
+       ├─ 2. Build user prompt (escalation ladder, delegation instructions)
+       ├─ 3. Create SDK session (in-memory, pi native defaults)
        │
-       └─ 4. Multi-turn loop (max 5 turns):
+       └─ 4. Multi-turn loop (max 10 turns):
             ├─ session.prompt(currentPrompt) → collect response
             ├─ extractDelegationPlan(response)
             │    ├─ Found? → executeSubagents() in parallel
@@ -125,7 +127,7 @@ CLI (cli.ts)
 
 ### Multi-turn loop
 
-Each agent runs in a single SDK session with up to 5 turns:
+Each agent runs in a single SDK session with up to 10 turns:
 
 1. **Turn 1**: Agent receives the prompt, outputs a delegate block
 2. **Orchestrator**: Parses the block, spawns subagents, collects results
@@ -137,9 +139,8 @@ The loop supports agents that want to delegate in multiple rounds (though in pra
 
 - Each agent gets a **fresh, in-memory SDK session** (`SessionManager.inMemory()`)
 - No session persistence — agents don't write to disk
-- `tools: []` and `customTools: []` — agents are text-only, no read/write/bash
-- System prompt set via `DefaultResourceLoader.systemPromptOverride()`
-- `session.dispose()` called in `finally` block to prevent leaks
+- Tools are passed via `-t/--tools` flag; coordinators can grant subsets to subagents
+- System prompt uses pi native defaults (no override)
 
 ### Model auto-detection
 
@@ -271,7 +272,7 @@ Tested exclusively with `deepseek/deepseek-v4-flash` (configured in `~/.pi/agent
 - **No mid-response tool calls**: Agents use text-based delegation instead of native tool calling (see Architecture section for why)
 - **Single-turn delegation**: Most agents delegate once and synthesize. Deep delegation chains (agent → subagent → sub-subagent) are theoretically supported but rarely triggered because initial prompts don't demand it
 - **Budget consumed on failure**: Failed subagents still consume budget (prevents race conditions with parallel spawns)
-- **Max 5 turns**: Hardcoded safety limit per agent to prevent infinite loops
+- **Max 10 turns**: Hardcoded safety limit per agent to prevent infinite loops
 - **No streaming output**: Users see only the tree until the final answer appears (the synthesis response is not streamed)
 - **Tree output preview truncated**: Only first 56 chars of subagent output shown in tree
 
@@ -308,7 +309,7 @@ roots -a 2 "Compare A and B. Delegate each to a subagent with a short name."
 
 | File | When you want to... |
 |------|---------------------|
-| `src/prompt.ts` | Change agent behavior, delegation instructions |
+| `src/prompt.ts` | Change system prompt for leaf vs coordinator (currently unused — delegation lives in agent.ts) |
 | `src/agent.ts` | Change delegation parsing, budget logic, session config |
 | `src/tree.ts` | Change tree rendering, status display |
 | `src/types.ts` | Change data model (add fields to AgentNode, etc.) |
