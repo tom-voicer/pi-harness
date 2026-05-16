@@ -1,3 +1,6 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 import {
   createReadTool,
   createBashTool,
@@ -31,12 +34,58 @@ export const AVAILABLE_TOOLS = [
   "web_extract",
 ] as const;
 
-function getTavilyKey(): string {
-  const key = process.env.TAVILY_API_KEY;
-  if (key) return key;
+let _cachedTavilyKey: string | null | undefined = undefined;
 
+function getTavilyKey(): string {
+  // Return cached key if already resolved
+  if (_cachedTavilyKey) return _cachedTavilyKey;
+  if (_cachedTavilyKey === null) {
+    throw new Error(
+      "No Tavily API key found. Set TAVILY_API_KEY env var or add 'tavilyApiKey' to your pi settings.",
+    );
+  }
+
+  // 1. Environment variable (explicit override)
+  if (process.env.TAVILY_API_KEY) {
+    _cachedTavilyKey = process.env.TAVILY_API_KEY;
+    return _cachedTavilyKey;
+  }
+
+  // 2. pi settings.json (persistent, set once)
+  try {
+    const agentDir = process.env.PI_CODING_AGENT_DIR ||
+      path.join(os.homedir(), ".pi", "agent");
+    const settingsPath = path.join(agentDir, "settings.json");
+    if (fs.existsSync(settingsPath)) {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+      if (settings.tavilyApiKey) {
+        _cachedTavilyKey = settings.tavilyApiKey;
+        return _cachedTavilyKey;
+      }
+    }
+  } catch { /* fall through */ }
+
+  // 3. pi's own tavily extension (read the hardcoded dev key)
+  try {
+    const agentDir = process.env.PI_CODING_AGENT_DIR ||
+      path.join(os.homedir(), ".pi", "agent");
+    const extPath = path.join(agentDir, "extensions", "tavily-search.ts");
+    if (fs.existsSync(extPath)) {
+      const src = fs.readFileSync(extPath, "utf-8");
+      const match = src.match(/TAVILY_API_KEY\s*\|\|\s*"(tvly-[^"]+)"/);
+      if (match) {
+        _cachedTavilyKey = match[1];
+        return _cachedTavilyKey;
+      }
+    }
+  } catch { /* fall through */ }
+
+  // No key found — mark as null so we don't keep searching
+  _cachedTavilyKey = null;
   throw new Error(
-    "TAVILY_API_KEY not set. Get a key at https://tavily.com and run: export TAVILY_API_KEY=tvly-...",
+    "No Tavily API key found. Options:\n" +
+      "  1. export TAVILY_API_KEY=tvly-...\n" +
+      '  2. Add "tavilyApiKey": "tvly-..." to ~/.pi/agent/settings.json',
   );
 }
 
