@@ -99,15 +99,32 @@ function extractDelegationPlan(text: string): DelegationPlan | null {
   return null;
 }
 
-// Extract individual tool calls from DeepSeek text output.
-// Handles two formats:
+// Extract individual tool calls from model text output.
+// DeepSeek outputs tool calls as text in several formats depending on
+// model variant, thinking level, and API compat mode. We handle all of them:
+//
 //   1. <function-call>{"name":"...","arguments":{...}}</function-call>
-//   2. XML-style: <toolname attr="value">...</toolname> or <toolname />
+//   2. DSML: <｜DSML｜tool_calls>call:web_search{"query":"..."}…</｜DSML｜tool_calls>
+//   3. standalone: call:web_search{"query":"..."}
+//   4. XML attributes: <read file="x"></read> or <web_search query="x" />
+//   5. XML child-elements: <web_search><query>x</query></web_search>
+//   6. pi-native: <invoke name="web_search"><parameter name="q">x</parameter></invoke>
+//   7. pi-native v2: <tool_call name="web_search"><query>x</query></tool_call>
 function extractToolCalls(
   text: string,
   knownTools: Set<string>,
 ): Array<{ name: string; args: Record<string, any> }> {
+  if (knownTools.size === 0) return [];
   const calls: Array<{ name: string; args: Record<string, any> }> = [];
+  const seen = new Set<string>();
+
+  const addCall = (name: string, args: Record<string, any>) => {
+    const sig = name + JSON.stringify(args);
+    if (!seen.has(sig) && knownTools.has(name)) {
+      seen.add(sig);
+      calls.push({ name, args });
+    }
+  };
 
   // Format 1: <function-call> JSON blocks
   const fcRe = /<function-call>\s*(\{[\s\S]*?\})\s*<\/function-call>/gi;
@@ -115,46 +132,86 @@ function extractToolCalls(
   while ((match = fcRe.exec(text)) !== null) {
     try {
       const parsed = JSON.parse(match[1]);
-      if (parsed.name && parsed.arguments) {
-        calls.push({ name: parsed.name, args: parsed.arguments });
-      }
+      if (parsed.name && parsed.arguments) addCall(parsed.name, parsed.arguments);
     } catch { /* skip */ }
   }
 
-  // Format 2: XML-style tags parsed with fast-xml-parser
-  if (knownTools.size > 0) {
-    const toolPattern = [...knownTools].join("|");
-    // Find blocks like <read file="x"></read> or <web_search query="x" />
-    const xmlRe = new RegExp(
-      `<(${toolPattern})\\b[^>]*(?:>[\\s\\S]*?<\\/\\1>|\\s*\\/>)`,
-      "gi",
-    );
-    while ((match = xmlRe.exec(text)) !== null) {
-      try {
-        const xmlBlock = match[0];
-        const parsed = xmlParser.parse(xmlBlock);
-        // fast-xml-parser produces { toolname: { "@_attr": val, child: ... } }
-        for (const [name, value] of Object.entries(parsed)) {
-          if (!knownTools.has(name)) continue;
-          if (calls.some((c) => c.name === name)) continue;
+  // Format 2 & 3: DSML and standalone call:tool{json} syntax
+  //   <｜DSML｜tool_calls>call:search{"q":"x"}…</｜DSML｜tool_calls>
+  //   call:read{"path":"x"}
+  // The ｜ is Unicode U+FF5C (FULLWIDTH VERTICAL LINE)
+  const callRe = /call:(\w+)\s*(\{[^}]*\})/gi;
+  while ((match = callRe.exec(text)) !== null) {
+    try {
+      const args = JSON.parse(match[2]);
+      addCall(match[1], args);
+    } catch { /* skip */ }
+  }
 
-          const args: Record<string, any> = {};
-          if (value && typeof value === "object") {
-            for (const [k, v] of Object.entries(value as Record<string, any>)) {
-              if (k.startsWith("@_")) {
-                args[k.slice(2)] = v; // attribute
-              } else {
-                args[k] = typeof v === "string" ? v : (v as any)?.["#text"] ?? JSON.stringify(v);
-              }
-            }
-          }
-          calls.push({ name, args });
-        }
-      } catch { /* invalid XML, skip */ }
+  // Format 4-7: General XML blocks
+  // Find XML blocks, parse with fast-xml-parser, walk for tool invocations
+  const xmlBlockRe = /<([\w-]+)[^>]*>[\s\S]*?<\/\1>/gi;
+  const blocks = new Set<string>();
+  while ((match = xmlBlockRe.exec(text)) !== null) blocks.add(match[0]);
+
+  for (const block of blocks) {
+    let mentionsKnownTool = false;
+    for (const t of knownTools) {
+      if (block.includes(t)) { mentionsKnownTool = true; break; }
     }
+    if (!mentionsKnownTool) continue;
+
+    try {
+      const parsed = xmlParser.parse(block);
+      extractXmlTree(parsed, knownTools, addCall);
+    } catch { /* skip */ }
   }
 
   return calls;
+}
+
+function extractXmlTree(
+  obj: any,
+  knownTools: Set<string>,
+  addCall: (name: string, args: Record<string, any>) => void,
+): void {
+  if (!obj || typeof obj !== "object") return;
+
+  for (const [key, value] of Object.entries(obj)) {
+    // Key IS a known tool name: { web_search: { "@_query": "..." } }
+    if (knownTools.has(key) && value && typeof value === "object") {
+      const args: Record<string, any> = {};
+      for (const [k, v] of Object.entries(value as Record<string, any>)) {
+        if (k.startsWith("@_")) args[k.slice(2)] = v;
+        else if (k !== "#text") args[k] = typeof v === "string" ? v : (v as any)?.["#text"] ?? String(v);
+      }
+      addCall(key, args);
+    }
+
+    // Key is invoke/tool_call with @_name: { invoke: { "@_name": "web_search", ... } }
+    if ((key === "invoke" || key === "tool_call" || key === "call") &&
+        value && typeof value === "object") {
+      const toolName = (value as any)["@_name"];
+      if (toolName && knownTools.has(toolName)) {
+        const args: Record<string, any> = {};
+        for (const [k, v] of Object.entries(value as Record<string, any>)) {
+          if (k.startsWith("@_")) continue;
+          if (k === "parameter") {
+            const params = Array.isArray(v) ? v : [v];
+            for (const p of params) {
+              if (p?.["@_name"]) args[p["@_name"]] = p["#text"] ?? "";
+            }
+          } else {
+            args[k] = typeof v === "string" ? v : (v as any)?.["#text"] ?? String(v);
+          }
+        }
+        addCall(toolName, args);
+      }
+    }
+
+    // Recurse
+    if (value && typeof value === "object") extractXmlTree(value, knownTools, addCall);
+  }
 }
 
 type ToolInstance = { execute: (...args: any[]) => Promise<any> };
