@@ -267,6 +267,38 @@ export async function runAgent(
     resourceLoader: loader,
   });
 
+  // Track tool calls for the tree display
+  const node = treeState.nodes.get(nodeId);
+  session.subscribe((event: any) => {
+    if (event.type === "tool_execution_start" && node) {
+      const existing = node.toolCalls.find(
+        (tc) => tc.name === event.toolName && !tc.success && !tc.error,
+      );
+      if (!existing) {
+        node.toolCalls.push({
+          name: event.toolName,
+          success: false, // will be updated on end
+          timestamp: Date.now(),
+        });
+      }
+    }
+    if (event.type === "tool_execution_end" && node) {
+      // Update the last matching pending call
+      for (let i = node.toolCalls.length - 1; i >= 0; i--) {
+        const tc = node.toolCalls[i];
+        if (tc.name === event.toolName && !tc.success && !tc.error) {
+          tc.success = !event.isError;
+          if (event.isError) {
+            tc.error =
+              event.result?.content?.[0]?.text?.slice(0, 60) ||
+              "tool error";
+          }
+          break;
+        }
+      }
+    }
+  });
+
   const budget = { value: maxAgents };
   let currentPrompt = prompt;
 

@@ -1,11 +1,19 @@
 export type AgentStatus = "pending" | "running" | "success" | "error";
 
+export interface ToolCallRecord {
+  name: string;
+  success: boolean;
+  error?: string;
+  timestamp: number;
+}
+
 export interface AgentNode {
   id: string;
   name: string;
   prompt: string;
   maxAgents: number;
   toolNames: string[];
+  toolCalls: ToolCallRecord[];
   parentId: string | null;
   status: AgentStatus;
   output: string | null;
@@ -39,7 +47,7 @@ export function addNode(
     prompt,
     maxAgents,
     toolNames,
-    parentId,
+    toolCalls: [],
     status: "pending",
     output: null,
     error: null,

@@ -1,4 +1,4 @@
-import type { AgentNode, TreeState } from "./types.js";
+import type { AgentNode, TreeState, ToolCallRecord } from "./types.js";
 
 const STATUS_ICONS: Record<string, string> = {
   pending: "⏳",
@@ -16,6 +16,19 @@ function truncate(text: string, maxLen: number): string {
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function formatToolCalls(calls: ToolCallRecord[]): string {
+  if (calls.length === 0) return "";
+  const parts = calls.map((tc) => {
+    const icon = tc.success ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m";
+    let s = `${tc.name} ${icon}`;
+    if (!tc.success && tc.error) {
+      s += ` \x1b[2m(${tc.error})\x1b[0m`;
+    }
+    return s;
+  });
+  return parts.join(" · ");
 }
 
 function renderNode(
@@ -45,6 +58,13 @@ function renderNode(
   }
 
   lines.push(line);
+
+  // Show tool call history (chronological)
+  if (node.toolCalls.length > 0) {
+    lines.push(
+      `${prefix}${isLast ? "    " : "│   "}  \x1b[2m${formatToolCalls(node.toolCalls)}\x1b[0m`,
+    );
+  }
 
   // Show brief output preview for success nodes
   if (node.status === "success" && node.output) {
@@ -109,7 +129,6 @@ function hasSubagents(state: TreeState): boolean {
 export function renderTreeText(state: TreeState): string {
   const root = state.rootId ? state.nodes.get(state.rootId) : null;
   if (!root) return "";
-  if (!hasSubagents(state)) return ""; // Don't render empty tree
 
   const lines: string[] = [];
   lines.push(
@@ -118,6 +137,12 @@ export function renderTreeText(state: TreeState): string {
         ? ` \x1b[2m[${root.toolNames.join(", ")}]\x1b[0m`
         : ""),
   );
+
+  // Show root tool calls
+  if (root.toolCalls.length > 0) {
+    lines.push(`  \x1b[2m${formatToolCalls(root.toolCalls)}\x1b[0m`);
+  }
+
   lines.push("│");
 
   const { completed, running, pending, errors } = countStatuses(state);
@@ -154,16 +179,6 @@ let previousTreeText = "";
 
 export function liveRender(state: TreeState): void {
   const tree = renderTreeText(state);
-
-  // No subagents yet, show simple status line
-  if (!tree) {
-    if (previousLineCount > 0) {
-      process.stdout.write(`\x1b[${previousLineCount}A\x1b[J`);
-      previousLineCount = 0;
-      previousTreeText = "";
-    }
-    return;
-  }
 
   // Skip if unchanged
   if (tree === previousTreeText) return;
