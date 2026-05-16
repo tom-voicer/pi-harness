@@ -30,24 +30,80 @@ function buildUserPrompt(task: string, maxAgents: number, toolNames: string[]): 
     ? `\nAvailable tools: ${toolNames.join(", ")}`
     : "";
 
-  return `You MUST delegate this task to subagents. Output EXACTLY a JSON delegation plan in this format (nothing else):
+  return `You are a coordinator agent with ${maxAgents} subagent spawns available (each subagent gets budget ${maxAgents - 1}).${toolList}
+
+## Decision: Delegate or answer directly?
+
+**Plan first.** Before outputting anything, identify which independent subtopics this task can be split into. If the task naturally decomposes into 2+ self-contained pieces, delegation will produce a better answer.
+
+**If there is the slightest doubt whether to delegate — delegate.** The delegation infrastructure is here to be used. Answering directly is ONLY for trivially simple tasks that cannot meaningfully be decomposed.
+
+### Escalation ladder (decide by matching your task against these examples)
+
+🔴 ANSWER DIRECTLY — trivial, single-fact, no decomposition possible:
+- "What is 2+2?" — single arithmetic fact, no research needed
+- "Who was the first US president?" — single known historical fact
+- "What is the capital of France?" — single geographic fact
+- "What year did WWII end?" — single historical date
+- "Translate 'hello' to Spanish" — single word translation
+- "Convert 100 km to miles" — unit conversion, formula lookup
+- "Define 'photosynthesis'" — dictionary-style definition
+- "What is the chemical symbol for gold?" — single atomic fact
+- "How many continents are there?" — trivial factual question
+- "What color is the sky?" — common knowledge, no research needed
+
+🟢 DELEGATE — everything else. If it's not in the list above, delegate:
+- "Compare cats and dogs as pets" → split: cats research + dogs research
+- "Pros and cons of remote work" → split: benefits research + drawbacks research
+- "Summarize the plot of Inception" → split: multiple interpretations research
+- "Explain how a car engine works" → split: combustion cycle + engine components + cooling system
+- "Healthy eating tips" → split: nutrition research + meal planning research
+- "Best programming languages for beginners" → one subagent per language
+- "Compare SQL vs NoSQL databases" → split: SQL research + NoSQL research
+- "Latest AI regulation news in EU and US" → split: EU regulation + US regulation
+- "MacBook Pro vs Dell XPS comparison" → split: MacBook research + Dell research
+- "Explain blockchain AND its environmental impact" → split: blockchain explainer + environmental impact
+- "Top travel destinations in Asia vs Europe" → split: Asia destinations + Europe destinations
+- "History and culture of Japan" → split: Japanese history + Japanese culture
+- "Compare renewable energy: solar vs wind vs hydro" → one subagent per energy type
+- "Best project management tools for small vs large teams" → split: small team tools + large team tools
+- "Comprehensive comparison of Python, JavaScript, and Rust for web development" → one subagent per language
+- "Quantum computing in 2025: theory, hardware, industry applications" → one subagent per facet
+- "Build a SaaS business plan: market analysis, competitors, pricing, tech stack" → one subagent per section
+- "Climate change impacts: agriculture, coastal cities, biodiversity" → one subagent per domain
+- "Two-week Japan itinerary: Tokyo, Kyoto, Osaka with budget, attractions, logistics" → one subagent per city + logistics
+- "State of AI in 2025: NLP, computer vision, robotics, ethics, regulation" → one subagent per area
+- "Compare top cloud providers: AWS, Azure, GCP on pricing, services, developer experience" → one subagent per provider + cross-cutting comparison
+- "Research paper: history of computing from Babbage to quantum" → one subagent per era
+
+## How to delegate
+
+Output EXACTLY this JSON block — nothing before or after:
 
 \`\`\`delegate
 {
   "tasks": [
-    { "name": "Task label", "prompt": "Detailed instructions...", "tools": ["web_search"] }
+    { "name": "Short task label", "prompt": "Detailed self-contained instructions for the subagent...", "tools": ["web_search"] }
   ]
 }
 \`\`\`
 
-Rules:
-- Each subagent gets budget ${maxAgents - 1}${toolList}
-- Grant tools via the "tools" array (subset of your tools). Omit = no tools.
-- Each subagent prompt must be detailed, self-contained, and goal-oriented.
-- Include relevant context from the user's request so subagents understand the bigger picture.
-- Output ONLY the delegate block — no text before or after.
+## Writing subagent prompts
 
-Task to delegate: ${task}`;
+Each subagent runs independently with no access to your conversation. Every prompt must be:
+- **Self-contained**: Include ALL relevant context from the user's request. The subagent sees only its prompt.
+- **Specific**: State exactly what to research, what angle to take, what format to return.
+- **Goal-oriented**: Tell the subagent what a successful answer looks like.
+- **Scoped**: One clear responsibility per subagent. Don't overlap responsibilities between subagents.
+- **Tool-aware**: If granting tools, tell the subagent to use them (e.g., "Use web_search to find current information").
+
+## After delegation
+
+Subagents run in parallel. Their results are fed back to you. Your job: synthesize all results into one comprehensive, unified answer. Do NOT mention subagents, delegation, or the process — present the final answer as your own.
+
+**CRITICAL:** Never write "I will delegate..." or "Let me split this..." — just output the \`\`\`delegate block or the direct answer. Announce nothing.
+
+Task: ${task}`;
 }
 
 interface DelegationPlan {
@@ -224,7 +280,7 @@ export async function runAgent(
         const plan = extractDelegationPlan(response);
         if (plan && plan.tasks.length > 0) {
           const cappedTasks = plan.tasks.slice(0, budget.value);
-          const childBudget = budget.value - 1;
+          const childBudget = maxAgents - 1;
           const results = await executeSubagents(
             cappedTasks, childBudget, toolNames,
             treeState, nodeId, config, signal, budget,
