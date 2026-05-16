@@ -6,10 +6,17 @@ import {
   SessionManager,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
+import { XMLParser } from "fast-xml-parser";
 import type { TreeState, RunConfig, SubagentTask, ToolCallRecord } from "./types.js";
 import { addNode } from "./types.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { resolveTools } from "./tools.js";
+
+const xmlParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "@_",
+  isArray: () => false,
+});
 
 let _authStorage: AuthStorage | null = null;
 let _modelRegistry: ModelRegistry | null = null;
@@ -95,7 +102,7 @@ function extractDelegationPlan(text: string): DelegationPlan | null {
 // Extract individual tool calls from DeepSeek text output.
 // Handles two formats:
 //   1. <function-call>{"name":"...","arguments":{...}}</function-call>
-//   2. <toolname><param>value</param></toolname>  (XML-style, specific to known tools)
+//   2. XML-style: <toolname attr="value">...</toolname> or <toolname />
 function extractToolCalls(
   text: string,
   knownTools: Set<string>,
@@ -114,38 +121,36 @@ function extractToolCalls(
     } catch { /* skip */ }
   }
 
-  // Format 2: <toolname><param>value</param></toolname>  XML-style
-  // Also handles: <toolname attr="value" />  HTML-attribute style
-  // Only match tool names we know about
+  // Format 2: XML-style tags parsed with fast-xml-parser
   if (knownTools.size > 0) {
     const toolPattern = [...knownTools].join("|");
-
-    // XML child-element style: <read><path>file.txt</path></read>
+    // Find blocks like <read file="x"></read> or <web_search query="x" />
     const xmlRe = new RegExp(
-      `<(${toolPattern})\\b[^>]*>([\\s\\S]*?)<\\/\\1>`,
+      `<(${toolPattern})\\b[^>]*(?:>[\\s\\S]*?<\\/\\1>|\\s*\\/>)`,
       "gi",
     );
     while ((match = xmlRe.exec(text)) !== null) {
-      const toolName = match[1];
-      const inner = match[2].trim();
-      if (calls.some((c) => c.name === toolName)) continue;
+      try {
+        const xmlBlock = match[0];
+        const parsed = xmlParser.parse(xmlBlock);
+        // fast-xml-parser produces { toolname: { "@_attr": val, child: ... } }
+        for (const [name, value] of Object.entries(parsed)) {
+          if (!knownTools.has(name)) continue;
+          if (calls.some((c) => c.name === name)) continue;
 
-      const args: Record<string, any> = {};
-      // Try child-element params
-      const paramRe = /<(\w+)>([\s\S]*?)<\/\1>/gi;
-      let pm;
-      while ((pm = paramRe.exec(inner)) !== null) {
-        args[pm[1]] = pm[2].trim();
-      }
-      // Also try attribute-style params: attr="value"
-      if (Object.keys(args).length === 0) {
-        const attrRe = /(\w+)="([^"]*)"/gi;
-        let am;
-        while ((am = attrRe.exec(inner)) !== null) {
-          args[am[1]] = am[2];
+          const args: Record<string, any> = {};
+          if (value && typeof value === "object") {
+            for (const [k, v] of Object.entries(value as Record<string, any>)) {
+              if (k.startsWith("@_")) {
+                args[k.slice(2)] = v; // attribute
+              } else {
+                args[k] = typeof v === "string" ? v : (v as any)?.["#text"] ?? JSON.stringify(v);
+              }
+            }
+          }
+          calls.push({ name, args });
         }
-      }
-      calls.push({ name: toolName, args });
+      } catch { /* invalid XML, skip */ }
     }
   }
 
