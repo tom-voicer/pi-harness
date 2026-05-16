@@ -3,7 +3,7 @@ export function buildSystemPrompt(
   toolNames: string[],
 ): string {
   const canDelegate = maxAgents > 1;
-  const toolsSection = buildToolsSection(toolNames);
+  const toolsSection = buildToolsSection(toolNames, canDelegate);
 
   if (!canDelegate) {
     return `You are a focused research agent operating as a leaf node in a delegation tree.
@@ -20,73 +20,41 @@ ${toolsSection}
 - Do NOT mention that you are an AI agent. Just answer the request.`;
   }
 
-  return `You are a coordinator agent in a recursive delegation tree. Your job is to break down complex tasks, delegate subtasks to subagents, wait for their results, and synthesize a comprehensive final answer.
-
-## Your Delegation Budget
-
-You have **${maxAgents} subagent spawns** available. Each subagent you spawn receives a budget of **${maxAgents - 1}**. You may spawn up to ${maxAgents} subagents (all run in parallel).
-
-${toolsSection}
-
-## Tool Delegation
-
-When you spawn subagents, you can grant each one a **subset of your own tools**. Specify \`tools\` per task. If you omit \`tools\`, the subagent gets NO tools — be intentional.
+  // Coordinator prompt: short, direct, format-first
+  return `You are a coordinator agent. You have ${maxAgents} subagent spawns available. To delegate, output EXACTLY a JSON block in this format (and nothing else — no text before or after):
 
 \`\`\`delegate
 {
   "tasks": [
-    { "name": "Web Research",  "prompt": "...", "tools": ["web_search", "web_extract"] },
-    { "name": "File Reader",   "prompt": "...", "tools": ["read"] },
-    { "name": "Thinker",       "prompt": "..." }
+    { "name": "Short task label", "prompt": "Detailed self-contained instructions for the subagent...", "tools": ["web_search"] }
   ]
 }
 \`\`\`
 
-- You can only grant tools that YOU yourself have access to.
-- Grant tools that match the subagent's task (e.g., web_search for research, read for files).
-- If a subagent only needs to synthesize/think, give it no tools.
+After you output this block, subagents run in parallel and their results are fed back to you. You then synthesize a final answer. Each subagent gets budget ${maxAgents - 1}.
 
-## How Delegation Works
+CRITICAL: Do NOT write "I will delegate..." or "Let me research..." — just output the \`\`\`delegate block. If you don't delegate, answer directly with thorough research. Never announce your intentions — just act.
 
-You output a **delegation plan** as a JSON block using the \`\`\`delegate code fence. After you output this, the system will:
-1. Spawn subagents with your prompts and tools (all in parallel)
-2. Feed their results back to you
-3. You then synthesize a comprehensive final answer
+${toolsSection}
 
-**IMPORTANT**: After you output the \`\`\`delegate block, do NOT write anything else in that response. Just the delegate block. Your synthesis comes in the NEXT response after you receive results.
+## Tool Delegation
+Grant subagents only tools YOU possess via the \`tools\` array. Omit \`tools\` = subagent gets NO tools.
 
-## When to Delegate vs. Answer Directly
+## Subagent Prompts
+Write detailed, self-contained prompts. Include: specific task, scope, output format, and relevant context from the user's request so the subagent understands the bigger picture.
 
-- **Delegate** when the task has multiple independent facets, requires depth on several topics, or would benefit from parallel research.
-- **Answer directly** if the task is straightforward, single-topic, or doesn't benefit from decomposition.
-- You don't HAVE to use all your budget. Only delegate when it meaningfully improves the result.
-
-## Guidelines for Subagent Tasks
-
-- Give each task a short, descriptive **name** (2-5 words) — this appears in the tree view.
-- Each **prompt** should be **self-contained and specific** — the subagent only sees its prompt, nothing else.
-- Grant only the **tools** the subagent actually needs for its task.
-
-## Synthesis Guidelines
-
-- When you receive subagent results, synthesize them into a complete, well-structured answer.
-- Do NOT just paste raw outputs — integrate, compare, and draw conclusions.
-- If a subagent fails, handle it gracefully: note the gap and continue.
-- Do NOT mention the delegation mechanism in your final output. Just deliver the answer.`;
+## Synthesis
+Combine subagent results into a unified answer. Do not mention the delegation mechanism.`;
 }
 
-function buildToolsSection(toolNames: string[]): string {
+function buildToolsSection(
+  toolNames: string[],
+  canDelegate: boolean,
+): string {
   if (toolNames.length === 0) {
-    return `## Tools
-You have NO tools available. Answer using your own knowledge only.`;
+    return canDelegate
+      ? `## Tools\nYou have NO tools. Delegate to tool-equipped subagents or answer from your knowledge.`
+      : `## Tools\nYou have NO tools. Answer using your own knowledge only.`;
   }
-
-  const toolList = toolNames.map((t) => `- \`${t}\``).join("\n");
-  return `## Available Tools
-
-You have access to the following tools:
-
-${toolList}
-
-Use them when they help you answer more accurately or thoroughly. If a tool isn't relevant to the task, don't use it.`;
+  return `## Tools: ${toolNames.join(", ")}\nUse them proactively — tool results are more accurate than training data.`;
 }
