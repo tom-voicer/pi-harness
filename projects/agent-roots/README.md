@@ -60,7 +60,8 @@ Coordinator agents receive pi's default system prompt. All delegation logic live
 - A **plan-first** directive: identify independent subtopics before outputting
 - A **doubt → delegate** rule: if there's any question whether to delegate, delegate
 - The ` ```delegate ``` ` JSON format for spawning subagents
-- Subagent prompt writing criteria (self-contained, specific, goal-oriented, scoped, tool-aware)
+- Subagent prompt writing criteria (self-contained, specific, goal-oriented, scoped)
+- **Tool-aware split**: When tools are available (`-t`), the prompt includes a "Tool granting rules" section and a "Tool-aware" guideline telling coordinators to only mention tools in subagent prompts that they're explicitly granting. When NO tools are available, the delegate format omits the `tools` field entirely, and a "No-tools constraint" guideline tells coordinators to write prompts that rely on training data.
 - Synthesis instructions
 
 ### The tree
@@ -244,6 +245,17 @@ unsub();
 
 **Fix**: Switched to a shell script that resolves the real project path and invokes `tsx` directly, avoiding the double-execution.
 
+### Agents refusing to answer due to missing tools
+
+**Problem**: When run without `-t`, coordinators saw a delegate example with `"tools": ["web_search"]` and a "Tool-aware" guideline saying "tell the subagent to use them." They wrote subagent prompts instructing web searches. Leaf agents received these prompts verbatim and refused: "I cannot perform web searches."
+
+**Symptom**: Subagents return non-answers like "I'd love to help but I cannot search the web" instead of providing their best knowledge-based answer.
+
+**Fix**: `buildUserPrompt()` now has three tool-aware paths:
+1. **Leaf + no tools**: Appends a "do your best, rely on training data, don't mention missing tools" instruction
+2. **Coordinator + no tools**: Omits `tools` from delegate example, replaces "Tool-aware" with "No-tools constraint"
+3. **Coordinator + tools**: Adds "Tool granting rules" section, rewrites "Tool-aware" to emphasize only grant tools you're passing
+
 ### typebox version
 
 pi bundles `typebox@1.1.38`. The package.json must use `^1.1.0`, not `^2.0.0` (which doesn't exist).
@@ -275,6 +287,7 @@ Tested exclusively with `deepseek/deepseek-v4-flash` (configured in `~/.pi/agent
 - **Max 10 turns**: Hardcoded safety limit per agent to prevent infinite loops
 - **No streaming output**: Users see only the tree until the final answer appears (the synthesis response is not streamed)
 - **Tree output preview truncated**: Only first 56 chars of subagent output shown in tree
+- **Tool-unaware agents (FIXED)**: ~~Agents without tools would refuse to answer when their prompts mentioned web_search/web_extract~~ → `buildUserPrompt()` is now fully tool-aware with three distinct paths (leaf no-tools, coordinator no-tools, coordinator with-tools)
 
 ---
 

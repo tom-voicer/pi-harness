@@ -24,11 +24,98 @@ function getRegistry(): ModelRegistry {
 }
 
 function buildUserPrompt(task: string, maxAgents: number, toolNames: string[]): string {
-  if (maxAgents <= 1) return task;
+  const hasTools = toolNames.length > 0;
 
-  const toolList = toolNames.length > 0
-    ? `\nAvailable tools: ${toolNames.join(", ")}`
-    : "";
+  // Leaf agent: answer directly
+  if (maxAgents <= 1) {
+    if (!hasTools) {
+      return `${task}\n\nIMPORTANT: You have NO tools available (no web search, no file access, nothing). Answer using ONLY your own knowledge and training data. Do your absolute best — do NOT mention missing tools, refuse to answer, or say "I cannot search the web." Just provide the best answer you can from what you know.`;
+    }
+    return task;
+  }
+
+  // Coordinator with NO tools — subagents also get no tools
+  if (!hasTools) {
+    return `You are a coordinator agent with ${maxAgents} subagent spawns available (each subagent gets budget ${maxAgents - 1}).
+
+You have NO tools. Subagents will also have NO tools.
+
+## Decision: Delegate or answer directly?
+
+**Plan first.** Before outputting anything, identify which independent subtopics this task can be split into. If the task naturally decomposes into 2+ self-contained pieces, delegation will produce a better answer.
+
+**If there is the slightest doubt whether to delegate — delegate.** The delegation infrastructure is here to be used. Answering directly is ONLY for trivially simple tasks that cannot meaningfully be decomposed.
+
+### Escalation ladder (decide by matching your task against these examples)
+
+🔴 ANSWER DIRECTLY — trivial, single-fact, no decomposition possible:
+- "What is 2+2?" — single arithmetic fact, no research needed
+- "Who was the first US president?" — single known historical fact
+- "What is the capital of France?" — single geographic fact
+- "What year did WWII end?" — single historical date
+- "Translate 'hello' to Spanish" — single word translation
+- "Convert 100 km to miles" — unit conversion, formula lookup
+- "Define 'photosynthesis'" — dictionary-style definition
+- "What is the chemical symbol for gold?" — single atomic fact
+- "How many continents are there?" — trivial factual question
+- "What color is the sky?" — common knowledge, no research needed
+
+🟢 DELEGATE — everything else. If it's not in the list above, delegate:
+- "Compare cats and dogs as pets" → split: cats research + dogs research
+- "Pros and cons of remote work" → split: benefits research + drawbacks research
+- "Summarize the plot of Inception" → split: multiple interpretations research
+- "Explain how a car engine works" → split: combustion cycle + engine components + cooling system
+- "Healthy eating tips" → split: nutrition research + meal planning research
+- "Best programming languages for beginners" → one subagent per language
+- "Compare SQL vs NoSQL databases" → split: SQL research + NoSQL research
+- "Latest AI regulation news in EU and US" → split: EU regulation + US regulation
+- "MacBook Pro vs Dell XPS comparison" → split: MacBook research + Dell research
+- "Explain blockchain AND its environmental impact" → split: blockchain explainer + environmental impact
+- "Top travel destinations in Asia vs Europe" → split: Asia destinations + Europe destinations
+- "History and culture of Japan" → split: Japanese history + Japanese culture
+- "Compare renewable energy: solar vs wind vs hydro" → one subagent per energy type
+- "Best project management tools for small vs large teams" → split: small team tools + large team tools
+- "Comprehensive comparison of Python, JavaScript, and Rust for web development" → one subagent per language
+- "Quantum computing in 2025: theory, hardware, industry applications" → one subagent per facet
+- "Build a SaaS business plan: market analysis, competitors, pricing, tech stack" → one subagent per section
+- "Climate change impacts: agriculture, coastal cities, biodiversity" → one subagent per domain
+- "Two-week Japan itinerary: Tokyo, Kyoto, Osaka with budget, attractions, logistics" → one subagent per city + logistics
+- "State of AI in 2025: NLP, computer vision, robotics, ethics, regulation" → one subagent per area
+- "Compare top cloud providers: AWS, Azure, GCP on pricing, services, developer experience" → one subagent per provider + cross-cutting comparison
+- "Research paper: history of computing from Babbage to quantum" → one subagent per era
+
+## How to delegate
+
+Output EXACTLY this JSON block — nothing before or after (no \`tools\` field — subagents have no tools):
+
+\`\`\`delegate
+{
+  "tasks": [
+    { "name": "Short task label", "prompt": "Detailed self-contained instructions for the subagent..." }
+  ]
+}
+\`\`\`
+
+## Writing subagent prompts
+
+Each subagent runs independently with no access to your conversation. Every prompt must be:
+- **Self-contained**: Include ALL relevant context from the user's request. The subagent sees only its prompt.
+- **Specific**: State exactly what to research, what angle to take, what format to return.
+- **Goal-oriented**: Tell the subagent what a successful answer looks like.
+- **Scoped**: One clear responsibility per subagent. Don't overlap responsibilities between subagents.
+- **No-tools constraint**: Subagents have NO tools. Write prompts that rely on training data and general knowledge. Do NOT instruct subagents to search the web, fetch URLs, read files, or use any tools — they cannot do any of that.
+
+## After delegation
+
+Subagents run in parallel. Their results are fed back to you. Your job: synthesize all results into one comprehensive, unified answer. Do NOT mention subagents, delegation, or the process — present the final answer as your own.
+
+**CRITICAL:** Never write "I will delegate..." or "Let me split this..." — just output the \`\`\`delegate block or the direct answer. Announce nothing.
+
+Task: ${task}`;
+  }
+
+  // Coordinator WITH tools — can grant subsets to subagents
+  const toolList = `\nAvailable tools: ${toolNames.join(", ")}`;
 
   return `You are a coordinator agent with ${maxAgents} subagent spawns available (each subagent gets budget ${maxAgents - 1}).${toolList}
 
@@ -88,6 +175,12 @@ Output EXACTLY this JSON block — nothing before or after:
 }
 \`\`\`
 
+## Tool granting rules
+
+- Subagents only get tools you explicitly list in the \`tools\` array. Omit \`tools\` = subagent gets NO tools.
+- You can only grant tools that YOU yourself have: ${toolNames.join(", ")}.
+- Grant tools sparingly — only when the subagent genuinely needs them for its task.
+
 ## Writing subagent prompts
 
 Each subagent runs independently with no access to your conversation. Every prompt must be:
@@ -95,7 +188,7 @@ Each subagent runs independently with no access to your conversation. Every prom
 - **Specific**: State exactly what to research, what angle to take, what format to return.
 - **Goal-oriented**: Tell the subagent what a successful answer looks like.
 - **Scoped**: One clear responsibility per subagent. Don't overlap responsibilities between subagents.
-- **Tool-aware**: If granting tools, tell the subagent to use them (e.g., "Use web_search to find current information").
+- **Tool-aware**: ONLY mention tools in subagent prompts if you are granting those specific tools via the \`tools\` array. If a subagent does not receive a tool, it cannot use it and will fail if told to do so. If you grant NO tools to a subagent, write its prompt to rely on training data — do NOT instruct it to search the web or use any tools.
 
 ## After delegation
 
