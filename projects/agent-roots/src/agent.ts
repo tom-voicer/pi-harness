@@ -262,7 +262,7 @@ export async function runAgent(
     modelRegistry: registry,
     model,
     thinkingLevel,
-    tools: builtin,
+    tools: toolNames,
     customTools: custom,
     resourceLoader: loader,
   });
