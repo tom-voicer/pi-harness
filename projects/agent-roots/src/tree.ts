@@ -3,7 +3,7 @@ import { writeStdout } from "./stdout.js";
 
 const STATUS_ICONS: Record<string, string> = {
   pending: "⏳",
-  running: "🟢",
+  running: "🔄",
   success: "✅",
   error: "❌",
 };
