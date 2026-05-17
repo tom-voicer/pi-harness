@@ -117,25 +117,35 @@ function getLocalSearXNGUrl(): string {
   return process.env.SEARXNG_URL?.replace(/\/+$/, "") ?? "";
 }
 
-// Fallback: check if we deployed SearXNG at the default port
-let _localSearxngChecked = false;
+// Fallback: probe SearXNG at the default port. Retries every call
+// with a short timeout so intermittent failures don't disable it permanently.
 let _localSearxngAvailable = false;
+let _lastProbeTime = 0;
 
 async function probeLocalSearXNG(): Promise<string> {
   const url = getLocalSearXNGUrl();
   if (url) return url;
   
-  if (!_localSearxngChecked) {
-    _localSearxngChecked = true;
-    try {
-      const resp = await fetch("http://localhost:8081/search?q=test&format=json", {
-        signal: AbortSignal.timeout(2000),
-      });
-      _localSearxngAvailable = resp.ok;
-    } catch {}
+  // Re-probe at most once every 30 seconds
+  const now = Date.now();
+  if (now - _lastProbeTime < 30_000) {
+    return _localSearxngAvailable ? "http://127.0.0.1:8081" : "";
+  }
+  _lastProbeTime = now;
+  
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2000);
+    const resp = await fetch("http://127.0.0.1:8081/search?q=test&format=json", {
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    _localSearxngAvailable = resp.ok;
+  } catch {
+    _localSearxngAvailable = false;
   }
   
-  return _localSearxngAvailable ? "http://localhost:8081" : "";
+  return _localSearxngAvailable ? "http://127.0.0.1:8081" : "";
 }
 
 const SEARXNG_PUBLIC = [
@@ -204,10 +214,12 @@ async function searchWeb(
 ): Promise<{ results: SearchResult[]; source: string }> {
   await throttleSearch();
 
-  // 1. Try local SearXNG (fastest, most reliable, no rate limits)
-  const localUrl = await probeLocalSearXNG();
-  if (localUrl) {
-    const results = await searxngSearch(localUrl, query);
+  // 1. Try local SearXNG — always try 127.0.0.1:8081 directly
+  //    (SEARXNG_URL env var overrides the default)
+  for (const baseUrl of [getLocalSearXNGUrl(), "http://127.0.0.1:8081"]) {
+    const url = baseUrl.replace(/\/+$/, "");
+    if (!url) continue;
+    const results = await searxngSearch(url, query);
     if (results.length > 0) {
       return { results, source: "searxng (local)" };
     }
