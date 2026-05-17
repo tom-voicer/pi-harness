@@ -39,15 +39,15 @@ function buildUserPrompt(task: string, maxAgents: number, toolNames: string[]): 
 
   // Coordinator with NO tools — subagents also get no tools
   if (!hasTools) {
-    return `You are a coordinator agent with ${maxAgents} subagent spawns available (each subagent gets budget ${maxAgents - 1}).
+    return `You are a coordinator agent with ${maxAgents} subagent spawns that you MUST exhaust (each subagent gets budget ${maxAgents - 1}).
 
 You have NO tools. Subagents will also have NO tools.
 
-## Decision: Delegate or answer directly?
+## Mandate: You MUST use ALL ${maxAgents} subagent spawns
 
-**Plan first.** Before outputting anything, identify which independent subtopics this task can be split into. If the task naturally decomposes into 2+ self-contained pieces, delegation will produce a better answer.
+**Plan first.** Before outputting anything, identify exactly ${maxAgents} independent subtopics to delegate. Break the task down until you have ${maxAgents} distinct, non-overlapping pieces — even if that means slicing more finely than you normally would. Leaving a subagent unused is failure.
 
-**If there is the slightest doubt whether to delegate — delegate.** The delegation infrastructure is here to be used. Answering directly is ONLY for trivially simple tasks that cannot meaningfully be decomposed.
+Answering directly is ONLY allowed for the 10 trivially-single-fact examples below. For everything else — including tasks that look like they could be split into fewer than ${maxAgents} subtopics — you MUST find a way to decompose into exactly ${maxAgents} independent subtasks. If necessary, split broader topics into narrower facets, or add complementary angles (e.g., history + current state + future outlook, or theory + practice + critique).
 
 ### Escalation ladder (decide by matching your task against these examples)
 
@@ -120,13 +120,13 @@ Task: ${task}`;
   // Coordinator WITH tools — can grant subsets to subagents
   const toolList = `\nAvailable tools: ${toolNames.join(", ")}`;
 
-  return `You are a coordinator agent with ${maxAgents} subagent spawns available (each subagent gets budget ${maxAgents - 1}).${toolList}
+  return `You are a coordinator agent with ${maxAgents} subagent spawns that you MUST exhaust (each subagent gets budget ${maxAgents - 1}).${toolList}
 
-## Decision: Delegate or answer directly?
+## Mandate: You MUST use ALL ${maxAgents} subagent spawns
 
-**Plan first.** Before outputting anything, identify which independent subtopics this task can be split into. If the task naturally decomposes into 2+ self-contained pieces, delegation will produce a better answer.
+**Plan first.** Before outputting anything, identify exactly ${maxAgents} independent subtopics to delegate. Break the task down until you have ${maxAgents} distinct, non-overlapping pieces — even if that means slicing more finely than you normally would. Leaving a subagent unused is failure.
 
-**If there is the slightest doubt whether to delegate — delegate.** The delegation infrastructure is here to be used. Answering directly is ONLY for trivially simple tasks that cannot meaningfully be decomposed.
+Answering directly is ONLY allowed for the 10 trivially-single-fact examples below. For everything else — including tasks that look like they could be split into fewer than ${maxAgents} subtopics — you MUST find a way to decompose into exactly ${maxAgents} independent subtasks. If necessary, split broader topics into narrower facets, or add complementary angles (e.g., history + current state + future outlook, or theory + practice + critique).
 
 ### Escalation ladder (decide by matching your task against these examples)
 
