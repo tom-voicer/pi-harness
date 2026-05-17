@@ -1,0 +1,7 @@
+# Generated files
+__pycache__/
+*.pyc
+*.pyo
+
+# Downloaded model
+face_landmarker.task
