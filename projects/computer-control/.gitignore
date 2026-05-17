@@ -6,5 +6,6 @@ __pycache__/
 # Downloaded model
 face_landmarker.task
 
-# User-specific calibration data
+# User-specific calibration data (EyeTrax model)
+gaze_model.pkl
 calibration.json
