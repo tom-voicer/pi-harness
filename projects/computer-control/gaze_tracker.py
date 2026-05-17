@@ -127,7 +127,7 @@ def _create_overlay():
 #  Tracker
 # ============================================================================
 class GazeTracker:
-    def __init__(self, estimator: GazeEstimator):
+    def __init__(self, estimator: GazeEstimator, tune: bool = True):
         _, window, sw, sh, dot_size = _create_overlay()
         self._window = window
         self._sw = sw
@@ -137,6 +137,14 @@ class GazeTracker:
 
         self.estimator = estimator
         self.smoother = KalmanSmoother(make_kalman())
+
+        if tune:
+            print("   Auto-tuning Kalman filter …")
+            try:
+                self.smoother.tune(estimator, camera_index=0)
+            except Exception as e:
+                print(f"   (tuning skipped: {e})")
+
         self.latest_gaze = None
         self.lock = threading.Lock()
         self.running = False
@@ -227,17 +235,26 @@ def main():
         help="Only calibrate, don't start tracking",
     )
     parser.add_argument(
-        "--rows", type=int, default=5,
-        help="Calibration grid rows (default 5, more = better accuracy)",
+        "--rows", type=int, default=9,
+        help="Calibration grid rows (default 9, more = better accuracy)",
     )
     parser.add_argument(
-        "--cols", type=int, default=5,
-        help="Calibration grid columns (default 5)",
+        "--cols", type=int, default=9,
+        help="Calibration grid columns (default 9)",
+    )
+    parser.add_argument(
+        "--model", default="ridge",
+        choices=["ridge", "elastic_net", "linear_svr", "tiny_mlp"],
+        help="Gaze prediction model (default ridge)",
+    )
+    parser.add_argument(
+        "--no-tune", action="store_true",
+        help="Skip Kalman filter auto-tuning",
     )
     args = parser.parse_args()
 
     # ---- Load or create estimator ----
-    estimator = GazeEstimator()
+    estimator = GazeEstimator(model_name=args.model)
 
     if not args.recalibrate and MODEL_PATH.exists():
         print(f"\U0001f4c2  Loading saved model from {MODEL_PATH}")
@@ -260,7 +277,7 @@ def main():
         print("\u2705  Calibration only — done.")
         return
 
-    tracker = GazeTracker(estimator)
+    tracker = GazeTracker(estimator, tune=not args.no_tune)
     try:
         tracker.start()
     except KeyboardInterrupt:
