@@ -1,0 +1,15 @@
+{
+  "name": "pi-extension-email-me",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.0"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^6.4.0"
+  }
+}

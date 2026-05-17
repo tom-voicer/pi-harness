@@ -1,0 +1,9 @@
+{
+  "name": "web-search",
+  "version": "1.0.0",
+  "description": "Self-hosted web search engine (DDG + SearXNG)",
+  "main": "index.ts",
+  "dependencies": {
+    "duck-duck-scrape": "^2.2.7"
+  }
+}

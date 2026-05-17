@@ -1,0 +1,11 @@
+{
+  "name": "web-extract",
+  "version": "1.0.0",
+  "description": "Self-hosted web content extraction (Readability + Turndown)",
+  "main": "index.ts",
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "jsdom": "^29.1.1",
+    "turndown": "^7.2.4"
+  }
+}
