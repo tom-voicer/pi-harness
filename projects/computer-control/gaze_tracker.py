@@ -218,9 +218,9 @@ class CalibrationModel:
     # ------------------------------------------------------------------
     def fit(self):
         """Train Ridge regression with polynomial features."""
-        if len(self.X) < 12:
+        if len(self.X) < 6:
             raise RuntimeError(
-                f"Need ≥12 calibration samples, got {len(self.X)}"
+                f"Need ≥6 calibration samples, got {len(self.X)}"
             )
         X = np.vstack(self.X)
         Y = np.array(self.Y, dtype=np.float32)
@@ -285,13 +285,18 @@ class CalibrationUI:
         self.sw = screen_w
         self.sh = screen_h
         self._root = tk.Tk()
-        self._root.overrideredirect(True)
+        # Use fullscreen instead of overrideredirect so macOS allows
+        # keyboard focus (overrideredirect windows can't receive key events)
         self._root.attributes("-topmost", True)
+        self._root.attributes("-fullscreen", True)
         self._root.configure(bg="black")
         self._root.geometry(f"{self.sw}x{self.sh}+0+0")
 
         # Semi-transparent overall
         self._root.attributes("-alpha", 0.85)
+
+        # Force focus so keybindings work
+        self._root.focus_force()
 
         self._canvas = tk.Canvas(
             self._root, width=self.sw, height=self.sh,
@@ -314,6 +319,10 @@ class CalibrationUI:
 
         self._root.bind("<space>", self._on_space)
         self._root.bind("<Escape>", self._on_esc)
+        # Also bind to canvas (belt-and-suspenders for macOS focus)
+        self._canvas.bind("<space>", self._on_space)
+        self._canvas.bind("<Escape>", self._on_esc)
+        self._canvas.focus_set()
 
     def _on_space(self, _event):
         self._space_pressed = True

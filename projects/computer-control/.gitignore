@@ -5,3 +5,6 @@ __pycache__/
 
 # Downloaded model
 face_landmarker.task
+
+# User-specific calibration data
+calibration.json
