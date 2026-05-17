@@ -1,30 +1,110 @@
 import type { AgentNode, TreeState } from "./types.js";
 import { rawWrite } from "./stdout.js";
 
-// ── Append-only tree rendering ───────────────────────────────────────
+// ── Scrollable tree viewport in alternate screen ────────────────────
 //
-// Design: each frame is written as a new snapshot. The terminal scrolls
-// naturally. The user can scroll up at any time to see the full tree —
-// no "update in place" that would reset their scroll position.
+// Uses the alternate screen buffer (like vim/htop/lazygit). Renders a
+// scrollable viewport of the full tree. Keyboard (j/k/arrows/PgUp/PgDn)
+// controls scroll position. Auto-follows new content at the bottom
+// until the user manually scrolls away.
 //
-// Why append instead of "update in place":
-//   - "Update in place" (clear + redraw) inherently resets the user's
-//     scroll position. Alternate screen, log-update, manual ANSI —
-//     they all fight the terminal's natural scrolling behavior.
-//   - Append works WITH the terminal: each tree snapshot is logged.
-//     The terminal scrolls to the latest frame. User scrolls up for
-//     history or to see parts of the tree that scrolled off.
+// Why this instead of the previous attempts:
+//   - Manual ANSI / log-update: cursor tracking breaks when terminal
+//     scrolls past the tracked position → duplication.
+//   - Alternate screen without scrolling: tree clipped to terminal
+//     height → can't view full tree.
+//   - Append-only: forces scroll-to-bottom every 250ms → impossible
+//     to read.
 //
-// Why "update in place" approaches all broke:
-//   - Manual \x1b[H\x1b[J: absolute cursor positioning fails when the
-//     terminal scrolls past the home position.
-//   - log-update: tracks cursor with line counts, but line counts
-//     become wrong after terminal scrolls.
-//   - Alternate screen: no scrollback = no scrolling at all.
-//
-// Append has none of these problems. No cursor tracking, no ANSI
-// manipulation, no line counting. Just write the tree and let the
-// terminal do what it does best.
+// This approach solves all three: no cursor tracking (full clear +
+// redraw each frame in alt screen), no clipping (scrollable viewport),
+// no forced scroll (user controls position via keyboard).
+
+const ENTER_ALT = "\x1b[?1049h\x1b[?25l"; // alt screen + hide cursor
+const EXIT_ALT = "\x1b[?25h\x1b[?1049l";  // show cursor + exit alt
+const CLEAR = "\x1b[2J\x1b[H";              // clear display + home
+
+let inAltScreen = false;
+let scrollOffset = 0;
+let userScrolled = false; // true once user presses a scroll key
+let treeLineCount = 0;
+let latestState: TreeState | null = null;
+
+function termHeight(): number { return process.stdout.rows || 24; }
+
+function enter(): void {
+  if (inAltScreen || !process.stdout.isTTY) return;
+  rawWrite(ENTER_ALT);
+  inAltScreen = true;
+  setupKeyboard();
+}
+
+function exit(): void {
+  if (!inAltScreen) return;
+  teardownKeyboard();
+  rawWrite(EXIT_ALT);
+  inAltScreen = false;
+}
+
+// Clean up on abnormal termination
+process.on("exit", exit);
+process.on("SIGINT", () => { exit(); process.exit(1); });
+process.on("SIGTERM", () => { exit(); process.exit(1); });
+
+// ── Keyboard input ──────────────────────────────────────────────────
+
+let stdinActive = false;
+
+function setupKeyboard(): void {
+  if (stdinActive || !process.stdin.isTTY) return;
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.on("data", onKey);
+  stdinActive = true;
+  process.stdout.on("resize", () => triggerRender());
+}
+
+function teardownKeyboard(): void {
+  if (!stdinActive) return;
+  process.stdin.removeListener("data", onKey);
+  process.stdin.setRawMode(false);
+  process.stdin.pause();
+  stdinActive = false;
+}
+
+function triggerRender(): void {
+  if (latestState) doLiveRender(latestState);
+}
+
+function onKey(data: Buffer): void {
+  const s = data.toString();
+  const th = termHeight();
+
+  // Quit: q or Ctrl-C
+  if (s === "\x03" || s === "q") { exit(); process.exit(0); return; }
+
+  // Arrow up / k
+  if (s === "\x1b[A" || s === "k") { scrollOffset--; userScrolled = true; triggerRender(); return; }
+  // Arrow down / j
+  if (s === "\x1b[B" || s === "j") { scrollOffset++; userScrolled = true; triggerRender(); return; }
+  // Page Up (half screen)
+  if (s === "\x1b[5~" || s === "\x15") { scrollOffset -= Math.floor(th / 2); userScrolled = true; triggerRender(); return; }
+  // Page Down (half screen)
+  if (s === "\x1b[6~" || s === "\x04") { scrollOffset += Math.floor(th / 2); userScrolled = true; triggerRender(); return; }
+  // Home / gg — jump to top
+  if (s === "\x1b[H" || s === "\x1b[1~") { scrollOffset = 0; userScrolled = true; triggerRender(); return; }
+  // End / G — jump to bottom
+  if (s === "\x1b[F" || s === "\x1b[4~" || s === "G") { scrollOffset = Infinity; userScrolled = false; triggerRender(); return; }
+  // gg — double-tap g to jump to top (vim convention)
+  if (s === "g") {
+    if (pendingG) { scrollOffset = 0; userScrolled = true; pendingG = false; triggerRender(); return; }
+    pendingG = true; setTimeout(() => { pendingG = false; }, 500); return;
+  }
+  pendingG = false;
+  // Escape (some PgUp/PgDn sequences start with \x1b, already handled above)
+}
+
+let pendingG = false;
 
 const STATUS_ICONS: Record<string, string> = {
   pending: "⏳",
@@ -170,9 +250,14 @@ export function renderTreeText(state: TreeState): string {
 let lastRendered = "";
 
 export function liveRender(state: TreeState): void {
+  latestState = state;
+  doLiveRender(state);
+}
+
+function doLiveRender(state: TreeState): void {
   const tree = renderTreeText(state);
 
-  // No subagents yet — show a compact one-liner
+  // No subagents yet — show a compact one-liner in alt screen
   if (!tree) {
     const root = state.rootId ? state.nodes.get(state.rootId) : null;
     if (root) {
@@ -181,7 +266,8 @@ export function liveRender(state: TreeState): void {
         ` \x1b[2m(thinking...)\x1b[0m`;
       if (statusLine !== lastRendered) {
         lastRendered = statusLine;
-        rawWrite(statusLine + "\n");
+        enter();
+        rawWrite(CLEAR + statusLine);
       }
     }
     return;
@@ -191,13 +277,61 @@ export function liveRender(state: TreeState): void {
   if (tree === lastRendered) return;
   lastRendered = tree;
 
-  // Append the new frame. Terminal scrolls to show it. User can scroll
-  // up through the scrollback to see the full tree at any point.
-  rawWrite(tree + "\n");
+  const lines = tree.split("\n");
+  const th = termHeight();
+  const newLineCount = lines.length;
+
+  // ── Scroll management ──────────────────────────────────────────
+  // Auto-follow bottom if user hasn't manually scrolled, or if they
+  // were already at the bottom (so new content is visible).
+  const maxOffset = Math.max(0, newLineCount - th);
+
+  if (!userScrolled) {
+    scrollOffset = maxOffset;
+  } else if (scrollOffset >= maxOffset - 1) {
+    // User is at/near bottom — keep them there as tree grows
+    scrollOffset = maxOffset;
+  }
+  // Clamp to valid range
+  scrollOffset = Math.max(0, Math.min(scrollOffset, maxOffset));
+
+  // ── Build viewport ─────────────────────────────────────────────
+  const visible: string[] = [];
+  // Reserve up to 1 line for top indicator, 1 for bottom help bar
+  const contentHeight = th - (scrollOffset > 0 ? 1 : 0) - (scrollOffset < maxOffset ? 1 : 0);
+
+  // Top scroll indicator
+  if (scrollOffset > 0) {
+    visible.push(`\x1b[2m↑ ${scrollOffset} lines above\x1b[0m`);
+  }
+
+  // Visible tree slice
+  const end = Math.min(scrollOffset + contentHeight, newLineCount);
+  for (let i = scrollOffset; i < end; i++) {
+    visible.push(lines[i]);
+  }
+
+  // Bottom help bar
+  if (scrollOffset < maxOffset) {
+    const below = maxOffset - scrollOffset;
+    visible.push(`\x1b[2m↓ ${below} lines below  j/k scroll · PgUp/PgDn page · gg/G top/bottom · q quit\x1b[0m`);
+  } else if (newLineCount > th) {
+    // At bottom but tree is taller — show minimal help
+    visible.push(`\x1b[2mj/k scroll · gg/G top/bottom · q quit\x1b[0m`);
+  } else {
+    // Tree fits entirely — show subtle help
+    visible.push(`\x1b[2mtree fits · q quit\x1b[0m`);
+  }
+
+  treeLineCount = newLineCount;
+  enter();
+  rawWrite(CLEAR + visible.join("\n"));
 }
 
 export function finalRender(state: TreeState): void {
+  exit();
   lastRendered = "";
+  latestState = null;
 
   const tree = renderTreeText(state);
   if (tree) {
