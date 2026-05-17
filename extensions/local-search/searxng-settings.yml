@@ -1,0 +1,51 @@
+use_default_settings: true
+general:
+  instance_name: "pi-local-search"
+  debug: false
+  enable_stats: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  secret_key: "pi-local-search-secret-key-change-me"
+  base_url: "http://localhost:8081/"
+  image_proxy: false
+  http_protocol_version: "1.1"
+  method: "GET"
+
+ui:
+  static_use_hash: false
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 15.0
+
+engines:
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+  - name: google
+    engine: google
+    shortcut: go
+  - name: bing
+    engine: bing
+    shortcut: bi
+  - name: startpage
+    engine: startpage
+    shortcut: sp
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+  - name: github
+    engine: github
+    shortcut: gh
+  - name: stackoverflow
+    engine: stackoverflow
+    shortcut: so

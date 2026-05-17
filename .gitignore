@@ -4,6 +4,9 @@ auth.json
 # Session logs — personal + large
 sessions/
 
+# Dependencies
+node_modules/
+
 # Binary tools — not custom (but shell scripts like piper/agent are tracked)
 bin/*
 !bin/piper
