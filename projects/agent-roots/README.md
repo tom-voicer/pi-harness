@@ -84,7 +84,7 @@ agent-roots/
 │   ├── cli.ts             # Argument parsing, main(), tree rendering timer
 │   ├── agent.ts           # runAgent(), extractDelegationPlan(), executeSubagents()
 │   ├── prompt.ts          # buildSystemPrompt(): leaf vs coordinator system prompts
-│   ├── tree.ts            # renderTreeText(), liveRender(), finalRender() (alternate screen buffer)
+│   ├── tree.ts            # renderTreeText(), liveRender(), finalRender() (append-only snapshots)
 │   ├── tools.ts           # Tool resolution / validation
 │   ├── stdout.ts          # Stdout guard, rawWrite export for tree rendering
 │   └── types.ts           # AgentNode, TreeState, SubagentTask, RunConfig
@@ -157,14 +157,13 @@ Gets the first available model from `~/.pi/agent/models.json` (respecting API ke
 
 ### Tree rendering
 
-The live tree renders every 250ms using the **alternate screen buffer** — the same paradigm used by `vim`, `less`, `htop`, `lazygit`, `git diff`, and thousands of other terminal tools:
+The live tree renders every 250ms using **append-only snapshots** — the simplest possible approach:
 
-1. **Enter alternate screen** (`\x1b[?1049h`): Switches to a clean buffer with no scrollback, saving the original screen
-2. **Clear + redraw each frame** (`\x1b[2J\x1b[H\x1b[3J`): Erase entire display + scrollback, move cursor to top-left, then write the tree
-3. **Clip to terminal height**: If the tree is taller than the terminal, it's truncated from the bottom with a "… N more lines" indicator — the root is always visible
-4. **Exit alternate screen** (`\x1b[?1049l`): On completion, restore the original terminal buffer and cursor position
+1. **Compute tree text**: Walk the node tree recursively, building box-drawing lines
+2. **Skip if unchanged**: Compare against `lastRendered` string to avoid no-op writes
+3. **Append the frame**: `rawWrite(tree + "\n")` — that's it. No clearing, no cursor positioning, no line counting.
 
-No cursor tracking, no line counting, no diffing — just clear + redraw. The alternate screen has no scrollback, so previous frames cannot accumulate.
+The terminal scrolls naturally to show new frames. The user can scroll up at any time to see the full tree, including parts that scrolled off-screen. This works WITH the terminal's scrollback buffer instead of fighting it.
 
 Key rendering details:
 - Node names are shown (set by delegator), falling back to truncated prompt
@@ -172,7 +171,7 @@ Key rendering details:
 - Completed nodes show final duration (output preview intentionally omitted)
 - Status line at bottom shows aggregate counts with ANSI colors
 - Only renders when `hasSubagents()` returns true (no flickering during leaf-agent runs)
-- Exits alternate screen on `SIGINT`/`SIGTERM`/`exit` to prevent leaving the terminal in a broken state
+- Before subagents appear, shows a compact one-liner: `🌳 roots  budget=N  (thinking...)`
 
 ---
 
@@ -294,13 +293,17 @@ pi bundles `typebox@1.1.38`. The package.json must use `^1.1.0`, not `^2.0.0` (w
 
 Without `agentDir`, `DefaultResourceLoader` throws `"path" argument must be of type string`. Always pass `getAgentDir()` from `@earendil-works/pi-coding-agent`.
 
-### Live tree rendering with log-update still duplicates on scroll
+### "Update in place" approaches are incompatible with user scrolling
 
-**Problem (log-update approach)**: After the initial fix (replacing manual ANSI with `log-update`), the tree still duplicates when it exceeds terminal height. Each render adds another full copy into the scrollback.
+**Problem**: Three approaches were tried to display the tree "in place" (one live frame that updates). All failed or killed scrollability:
 
-**Root cause**: `log-update` tracks cursor position by counting lines (`previousLineCount`). When the tree exceeds terminal height and the terminal scrolls, the cursor is no longer where log-update thinks it is. Its `eraseLines(N)` moves up N lines from the WRONG position, so old content is never erased — it just accumulates.
+1. **Manual ANSI** (`\x1b[H\x1b[J`): Absolute cursor positioning fails after the terminal scrolls — old frames accumulate in scrollback.
+2. **log-update**: Tracks cursor with line counts, but line counts become wrong after the terminal scrolls — same duplication problem.
+3. **Alternate screen** (`\x1b[?1049h`): Prevents duplication (no scrollback), but also prevents user scrolling — the tree is clipped to terminal height with no way to see clipped content.
 
-**Fix**: Replaced `log-update` with the **alternate screen buffer** (`\x1b[?1049h`/`\x1b[?1049l`). The alternate screen has no scrollback — we clear and redraw every frame with `\x1b[2J\x1b[H\x1b[3J`. No cursor tracking, no line counting, no diffing. When the tree is too tall for the terminal, it's clipped from the bottom (keeping the root visible). This is the same paradigm used by every interactive terminal tool (vim, less, htop, lazygit, git diff, k9s, etc.).
+**Root cause**: "Update in place" inherently requires controlling the cursor position. Any scroll by the user (or the terminal) invalidates that control. The terminal's scrollback and the application's cursor tracking are fundamentally at odds.
+
+**Fix (append-only)**: Stop fighting the terminal. Each tree snapshot is appended as a new frame. The terminal scrolls naturally. The user can scroll up through the scrollback to see the full tree at any time. No cursor tracking, no ANSI manipulation, no line counting. Just `rawWrite(tree + "\n")`.
 
 ### AGENTS.md and skills leak into agent context
 

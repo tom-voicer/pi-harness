@@ -1,61 +1,30 @@
 import type { AgentNode, TreeState } from "./types.js";
 import { rawWrite } from "./stdout.js";
 
-// ── Alternate screen buffer ──────────────────────────────────────────
-// The conventional paradigm for live-updating terminal views (used by
-// vim, less, htop, lazygit, git diff, and thousands of other tools).
+// ── Append-only tree rendering ───────────────────────────────────────
 //
-// Why this instead of log-update:
-//   log-update tracks cursor position by counting lines. When the tree
-//   exceeds terminal height and the terminal scrolls, the cursor position
-//   is no longer where log-update thinks it is. Its eraseLines(N) moves
-//   up N lines from the WRONG position, so old content is never erased —
-//   it just accumulates in the scrollback.
+// Design: each frame is written as a new snapshot. The terminal scrolls
+// naturally. The user can scroll up at any time to see the full tree —
+// no "update in place" that would reset their scroll position.
 //
-// The alternate screen buffer has no scrollback. We clear and redraw
-// every frame. No cursor tracking, no line counting, no diffing.
+// Why append instead of "update in place":
+//   - "Update in place" (clear + redraw) inherently resets the user's
+//     scroll position. Alternate screen, log-update, manual ANSI —
+//     they all fight the terminal's natural scrolling behavior.
+//   - Append works WITH the terminal: each tree snapshot is logged.
+//     The terminal scrolls to the latest frame. User scrolls up for
+//     history or to see parts of the tree that scrolled off.
 //
-// Escape sequences (ANSI X3.64 / ECMA-48):
-//   \x1b[?1049h — enter alt screen (save cursor, switch to clean buffer)
-//   \x1b[?1049l — exit alt screen (restore cursor and original buffer)
-//   \x1b[2J    — erase entire display
-//   \x1b[H     — cursor to home (row 1, column 1)
-//   \x1b[3J    — erase scrollback (prevent accumulation if alt screen
-//                isn't supported; ignored by terminals that lack it)
-
-const ENTER_ALT = "\x1b[?1049h";
-const EXIT_ALT = "\x1b[?1049l";
-const CLEAR = "\x1b[2J\x1b[H";
-const CLEAR_SCROLLBACK = "\x1b[3J";
-
-let inAltScreen = false;
-
-function enterAltScreen(): void {
-  if (!inAltScreen && process.stdout.isTTY) {
-    rawWrite(ENTER_ALT);
-    inAltScreen = true;
-  }
-}
-
-function exitAltScreen(): void {
-  if (inAltScreen) {
-    rawWrite(EXIT_ALT);
-    inAltScreen = false;
-  }
-}
-
-// Ensure alt screen is exited on abnormal termination
-process.on("exit", exitAltScreen);
-process.on("SIGINT", () => { exitAltScreen(); process.exit(1); });
-process.on("SIGTERM", () => { exitAltScreen(); process.exit(1); });
-
-function redrawFrame(output: string): void {
-  enterAltScreen();
-  // Clear display + clear scrollback + home cursor, then write the frame.
-  // \x1b[3J clears the scrollback buffer (supported by xterm, iTerm2,
-  // Windows Terminal, kitty, alacritty; silently ignored elsewhere).
-  rawWrite(CLEAR + CLEAR_SCROLLBACK + output);
-}
+// Why "update in place" approaches all broke:
+//   - Manual \x1b[H\x1b[J: absolute cursor positioning fails when the
+//     terminal scrolls past the home position.
+//   - log-update: tracks cursor with line counts, but line counts
+//     become wrong after terminal scrolls.
+//   - Alternate screen: no scrollback = no scrolling at all.
+//
+// Append has none of these problems. No cursor tracking, no ANSI
+// manipulation, no line counting. Just write the tree and let the
+// terminal do what it does best.
 
 const STATUS_ICONS: Record<string, string> = {
   pending: "⏳",
@@ -200,32 +169,10 @@ export function renderTreeText(state: TreeState): string {
 // Track the last rendered string so we can skip no-op updates.
 let lastRendered = "";
 
-function getTerminalHeight(): number {
-  return process.stdout.rows || 24;
-}
-
-/**
- * Clip the tree to terminal height, keeping the ROOT visible at the top.
- * If the tree is too tall, the bottom is cut and a truncation indicator
- * is appended. This avoids the terminal scrolling within the alt screen
- * and ensures the cursor tracking issues that plagued log-update cannot
- * recur.
- */
-function clipToTerminal(tree: string): string {
-  const maxRows = getTerminalHeight();
-  const lines = tree.split("\n");
-  if (lines.length <= maxRows) return tree;
-
-  // Keep root + as many children as fit. Reserve 1 line for truncation indicator.
-  const visible = lines.slice(0, maxRows - 1);
-  visible.push(`\x1b[2m… ${lines.length - visible.length} more lines (resize terminal to see full tree)\x1b[0m`);
-  return visible.join("\n");
-}
-
 export function liveRender(state: TreeState): void {
   const tree = renderTreeText(state);
 
-  // No subagents yet — show a compact status line at the top of the alt screen
+  // No subagents yet — show a compact one-liner
   if (!tree) {
     const root = state.rootId ? state.nodes.get(state.rootId) : null;
     if (root) {
@@ -234,7 +181,7 @@ export function liveRender(state: TreeState): void {
         ` \x1b[2m(thinking...)\x1b[0m`;
       if (statusLine !== lastRendered) {
         lastRendered = statusLine;
-        redrawFrame(statusLine);
+        rawWrite(statusLine + "\n");
       }
     }
     return;
@@ -244,14 +191,12 @@ export function liveRender(state: TreeState): void {
   if (tree === lastRendered) return;
   lastRendered = tree;
 
-  const output = clipToTerminal(tree);
-  redrawFrame(output);
+  // Append the new frame. Terminal scrolls to show it. User can scroll
+  // up through the scrollback to see the full tree at any point.
+  rawWrite(tree + "\n");
 }
 
 export function finalRender(state: TreeState): void {
-  // Exit the alternate screen — restores the original terminal buffer
-  // and cursor position where the user was before roots started.
-  exitAltScreen();
   lastRendered = "";
 
   const tree = renderTreeText(state);
