@@ -84,9 +84,9 @@ agent-roots/
 │   ├── cli.ts             # Argument parsing, main(), tree rendering timer
 │   ├── agent.ts           # runAgent(), extractDelegationPlan(), executeSubagents()
 │   ├── prompt.ts          # buildSystemPrompt(): leaf vs coordinator system prompts
-│   ├── tree.ts            # renderTreeText(), liveRender(), finalRender() (uses log-update)
+│   ├── tree.ts            # renderTreeText(), liveRender(), finalRender() (alternate screen buffer)
 │   ├── tools.ts           # Tool resolution / validation
-│   ├── stdout.ts          # Stdout guard, rawWrite export for log-update
+│   ├── stdout.ts          # Stdout guard, rawWrite export for tree rendering
 │   └── types.ts           # AgentNode, TreeState, SubagentTask, RunConfig
 ├── package.json
 ├── tsconfig.json
@@ -157,13 +157,14 @@ Gets the first available model from `~/.pi/agent/models.json` (respecting API ke
 
 ### Tree rendering
 
-The live tree renders every 250ms via `log-update` (battle-tested live terminal output):
+The live tree renders every 250ms using the **alternate screen buffer** — the same paradigm used by `vim`, `less`, `htop`, `lazygit`, `git diff`, and thousands of other terminal tools:
 
-1. **Calculate tree text**: Walk the node tree recursively, building box-drawing lines
-2. **Call `render(treeText)`**: `log-update` handles erasing previous output, diffing changed lines, and using synchronized output (`\x1B[?2026h/l`) to prevent partial frames
-3. **Skip if unchanged**: Track `lastRendered` string to avoid no-op calls
+1. **Enter alternate screen** (`\x1b[?1049h`): Switches to a clean buffer with no scrollback, saving the original screen
+2. **Clear + redraw each frame** (`\x1b[2J\x1b[H\x1b[3J`): Erase entire display + scrollback, move cursor to top-left, then write the tree
+3. **Clip to terminal height**: If the tree is taller than the terminal, it's truncated from the bottom with a "… N more lines" indicator — the root is always visible
+4. **Exit alternate screen** (`\x1b[?1049l`): On completion, restore the original terminal buffer and cursor position
 
-The renderer skips rendering entirely when there are no subagent nodes (doesn't show empty tree).
+No cursor tracking, no line counting, no diffing — just clear + redraw. The alternate screen has no scrollback, so previous frames cannot accumulate.
 
 Key rendering details:
 - Node names are shown (set by delegator), falling back to truncated prompt
@@ -171,7 +172,7 @@ Key rendering details:
 - Completed nodes show final duration (output preview intentionally omitted)
 - Status line at bottom shows aggregate counts with ANSI colors
 - Only renders when `hasSubagents()` returns true (no flickering during leaf-agent runs)
-- Uses `log-update` via a custom stream wrapper that writes through `rawWrite` (the real stdout captured before `guardStdout` replaces `process.stdout.write`)
+- Exits alternate screen on `SIGINT`/`SIGTERM`/`exit` to prevent leaving the terminal in a broken state
 
 ---
 
@@ -293,13 +294,13 @@ pi bundles `typebox@1.1.38`. The package.json must use `^1.1.0`, not `^2.0.0` (w
 
 Without `agentDir`, `DefaultResourceLoader` throws `"path" argument must be of type string`. Always pass `getAgentDir()` from `@earendil-works/pi-coding-agent`.
 
-### Absolute cursor positioning (`\x1b[H`) causes terminal flickering
+### Live tree rendering with log-update still duplicates on scroll
 
-**Problem**: After ~60s when the tree grows deep, the tree appears to duplicate itself rapidly (3-4x/sec, matching the 250ms render interval). Previously rendered tree content accumulates in the scrollback instead of being replaced.
+**Problem (log-update approach)**: After the initial fix (replacing manual ANSI with `log-update`), the tree still duplicates when it exceeds terminal height. Each render adds another full copy into the scrollback.
 
-**Root cause**: `liveRender()` used absolute cursor positioning `\x1b[H\x1b[J` (cursor home + clear display). When the tree exceeds terminal height, the terminal scrolls, `\x1b[H` no longer points to the visible top, and `\x1b[J` can't clear the scrollback. Each render adds another copy into the scrollback.
+**Root cause**: `log-update` tracks cursor position by counting lines (`previousLineCount`). When the tree exceeds terminal height and the terminal scrolls, the cursor is no longer where log-update thinks it is. Its `eraseLines(N)` moves up N lines from the WRONG position, so old content is never erased — it just accumulates.
 
-**Fix**: Replaced manual ANSI escape code management with `log-update` (sindresorhus), a battle-tested library for live-updating terminal output. It uses synchronized output (`\x1B[?2026h/l`) to prevent partial frames, line-by-line diffing to minimize rewrites, and properly handles terminal dimensions. The tree renderer now calls `render(treeText)` instead of managing escape codes manually.
+**Fix**: Replaced `log-update` with the **alternate screen buffer** (`\x1b[?1049h`/`\x1b[?1049l`). The alternate screen has no scrollback — we clear and redraw every frame with `\x1b[2J\x1b[H\x1b[3J`. No cursor tracking, no line counting, no diffing. When the tree is too tall for the terminal, it's clipped from the bottom (keeping the root visible). This is the same paradigm used by every interactive terminal tool (vim, less, htop, lazygit, git diff, k9s, etc.).
 
 ### AGENTS.md and skills leak into agent context
 
@@ -333,7 +334,7 @@ Tested exclusively with `deepseek/deepseek-v4-flash` (configured in `~/.pi/agent
 - **Budget consumed on failure**: Failed subagents still consume budget (prevents race conditions with parallel spawns)
 - **Max 10 turns**: Hardcoded safety limit per agent to prevent infinite loops
 - **No streaming output**: Users see only the tree until the final answer appears (the synthesis response is not streamed)
-- **Tree output preview removed**: Subagent output preview was removed because it was suspected to cause terminal flickering/duplication (see [Gotcha: Output preview causes terminal flickering](#output-preview-causes-terminal-flickering))
+- **Tree output preview removed**: Subagent output preview was removed because it was suspected to cause terminal flickering/duplication (see [Gotcha: Live tree rendering with log-update still duplicates on scroll](#live-tree-rendering-with-log-update-still-duplicates-on-scroll))
 - **Tool-unaware agents (FIXED)**: ~~Agents without tools would refuse to answer when their prompts mentioned web_search/web_extract~~ → `buildUserPrompt()` is now fully tool-aware with three distinct paths (leaf no-tools, coordinator no-tools, coordinator with-tools)
 
 ---
@@ -379,7 +380,6 @@ roots -a 2 "Compare A and B. Delegate each to a subagent with a short name."
 ### Dependencies
 
 - `@earendil-works/pi-coding-agent` — pi's SDK (`createAgentSession`, `DefaultResourceLoader`, etc.)
-- `log-update` — Live-updating terminal output (handles erasing/diffing/synchronized output)
 - `typebox` — Schema definitions (transitive dep of pi, also listed directly)
 - `tsx` — TypeScript execution (dev dependency)
 
