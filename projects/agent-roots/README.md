@@ -46,7 +46,7 @@ Every agent in the tree has a budget. The budget controls two things:
 1. **How many subagents** this agent can spawn
 2. **What budget** those subagents receive (parent's budget − 1)
 
-The budget is the **maximum number of successful subagent spawns**. Currently, both successful and failed spawns consume budget (see [Current Limitations](#multilevel-deep-trees)).
+The budget is a **mandatory quota, not a maximum**. Agents are obligated to exhaust their entire subagent budget — they MUST spawn exactly `maxAgents` subagents unless the task is one of 10 trivially-single-fact questions. Leaving a subagent unused is failure. Currently, both successful and failed spawns consume budget (see [Current Limitations](#multilevel-deep-trees)).
 
 ### Leaf agents (budget = 1)
 
@@ -56,9 +56,9 @@ Leaf agents receive a system prompt that casts them as an **expert planning and 
 
 Coordinator agents receive a system prompt that casts them as an **expert planning and orchestration agent** — strategic decomposers who plan backward from the ideal outcome. All delegation mechanics live in the **user prompt** (`buildUserPrompt()`), which is the authoritative instruction channel. It contains:
 
-- A **two-tier escalation ladder** (32 examples): 10 trivially-single-fact tasks → answer directly; 22 everything-else tasks → delegate with explicit split strategies
-- A **plan-first** directive: identify independent subtopics before outputting
-- A **doubt → delegate** rule: if there's any question whether to delegate, delegate
+- A **two-tier escalation ladder** (32 examples): 10 trivially-single-fact tasks → answer directly; 22 everything-else tasks → delegate with explicit split strategies (and MUST use ALL subagent slots)
+- A **plan-first** directive: identify exactly N independent subtopics before outputting
+- A **mandatory exhaustion rule**: agents MUST spawn all `maxAgents` subagents — the only exception is the 10 trivial examples below the ladder
 - The ` ```delegate ``` ` JSON format for spawning subagents
 - Subagent prompt writing criteria (self-contained, specific, goal-oriented, scoped)
 - **Tool-aware split**: When tools are available (`-t`), the prompt includes a "Tool granting rules" section and a "Tool-aware" guideline telling coordinators to only mention tools in subagent prompts that they're explicitly granting. When NO tools are available, the delegate format omits the `tools` field entirely, and a "No-tools constraint" guideline tells coordinators to write prompts that rely on training data.
@@ -84,7 +84,9 @@ agent-roots/
 │   ├── cli.ts             # Argument parsing, main(), tree rendering timer
 │   ├── agent.ts           # runAgent(), extractDelegationPlan(), executeSubagents()
 │   ├── prompt.ts          # buildSystemPrompt(): leaf vs coordinator system prompts
-│   ├── tree.ts            # renderTreeText(), liveRender(), finalRender()
+│   ├── tree.ts            # renderTreeText(), liveRender(), finalRender() (uses log-update)
+│   ├── tools.ts           # Tool resolution / validation
+│   ├── stdout.ts          # Stdout guard, rawWrite export for log-update
 │   └── types.ts           # AgentNode, TreeState, SubagentTask, RunConfig
 ├── package.json
 ├── tsconfig.json
@@ -155,21 +157,21 @@ Gets the first available model from `~/.pi/agent/models.json` (respecting API ke
 
 ### Tree rendering
 
-The live tree renders every 250ms using ANSI escape codes:
+The live tree renders every 250ms via `log-update` (battle-tested live terminal output):
 
 1. **Calculate tree text**: Walk the node tree recursively, building box-drawing lines
-2. **Check for changes**: Skip re-render if tree text hasn't changed (avoids flicker)
-3. **Clear previous**: Move cursor up N lines (`\x1b[{N}A`) and clear to end (`\x1b[J`)
-4. **Render new**: Print the tree
+2. **Call `render(treeText)`**: `log-update` handles erasing previous output, diffing changed lines, and using synchronized output (`\x1B[?2026h/l`) to prevent partial frames
+3. **Skip if unchanged**: Track `lastRendered` string to avoid no-op calls
 
 The renderer skips rendering entirely when there are no subagent nodes (doesn't show empty tree).
 
 Key rendering details:
 - Node names are shown (set by delegator), falling back to truncated prompt
 - Running nodes show elapsed time with millisecond precision
-- Completed nodes show final duration and output preview (first 56 chars)
+- Completed nodes show final duration (output preview intentionally omitted)
 - Status line at bottom shows aggregate counts with ANSI colors
 - Only renders when `hasSubagents()` returns true (no flickering during leaf-agent runs)
+- Uses `log-update` via a custom stream wrapper that writes through `rawWrite` (the real stdout captured before `guardStdout` replaces `process.stdout.write`)
 
 ---
 
@@ -227,6 +229,18 @@ The `bin/roots` entry is a shell script that resolves symlinks and calls `tsx`. 
 - A pure Node.js shebang can't load `.ts` files
 - The shell script follows symlinks to find the project root, then invokes `tsx`
 
+### 7. Mandatory budget exhaustion (not encouragement)
+
+**Original approach**: Agents were _encouraged_ to delegate ("if there's the slightest doubt, delegate"). But coordinators often spawned fewer subagents than their budget allowed, wasting parallelism.
+
+**Change**: The budget is now a mandatory quota. Coordinators MUST spawn exactly `maxAgents` subagents unless the task is genuinely trivial (one of 10 single-fact examples). The prompts instruct agents to slice topics more finely if needed, or add complementary angles (history + current state + future outlook, theory + practice + critique) to fill all slots.
+
+**Impact**: Deeper, more exhaustive trees; better use of parallel computation. The trade-off is higher token consumption and longer runtimes, but the results are more thorough.
+
+**Where**: Changes span three places:
+- `buildUserPrompt()` (agent.ts): both coordinator paths (with and without tools)
+- `buildSystemPrompt()` (prompt.ts): coordinator identity and guidelines
+
 ---
 
 ## Gotchas & Lessons Learned
@@ -279,6 +293,14 @@ pi bundles `typebox@1.1.38`. The package.json must use `^1.1.0`, not `^2.0.0` (w
 
 Without `agentDir`, `DefaultResourceLoader` throws `"path" argument must be of type string`. Always pass `getAgentDir()` from `@earendil-works/pi-coding-agent`.
 
+### Absolute cursor positioning (`\x1b[H`) causes terminal flickering
+
+**Problem**: After ~60s when the tree grows deep, the tree appears to duplicate itself rapidly (3-4x/sec, matching the 250ms render interval). Previously rendered tree content accumulates in the scrollback instead of being replaced.
+
+**Root cause**: `liveRender()` used absolute cursor positioning `\x1b[H\x1b[J` (cursor home + clear display). When the tree exceeds terminal height, the terminal scrolls, `\x1b[H` no longer points to the visible top, and `\x1b[J` can't clear the scrollback. Each render adds another copy into the scrollback.
+
+**Fix**: Replaced manual ANSI escape code management with `log-update` (sindresorhus), a battle-tested library for live-updating terminal output. It uses synchronized output (`\x1B[?2026h/l`) to prevent partial frames, line-by-line diffing to minimize rewrites, and properly handles terminal dimensions. The tree renderer now calls `render(treeText)` instead of managing escape codes manually.
+
 ### AGENTS.md and skills leak into agent context
 
 **Problem**: `DefaultResourceLoader` discovers AGENTS.md files from cwd/parent dirs and skills from `~/.pi/agent/skills/` / `~/.agents/skills/`. Even with `systemPromptOverride`, pi's `buildSystemPrompt()` appends these as `# Project Context` and `<available_skills>` sections.
@@ -311,7 +333,7 @@ Tested exclusively with `deepseek/deepseek-v4-flash` (configured in `~/.pi/agent
 - **Budget consumed on failure**: Failed subagents still consume budget (prevents race conditions with parallel spawns)
 - **Max 10 turns**: Hardcoded safety limit per agent to prevent infinite loops
 - **No streaming output**: Users see only the tree until the final answer appears (the synthesis response is not streamed)
-- **Tree output preview truncated**: Only first 56 chars of subagent output shown in tree
+- **Tree output preview removed**: Subagent output preview was removed because it was suspected to cause terminal flickering/duplication (see [Gotcha: Output preview causes terminal flickering](#output-preview-causes-terminal-flickering))
 - **Tool-unaware agents (FIXED)**: ~~Agents without tools would refuse to answer when their prompts mentioned web_search/web_extract~~ → `buildUserPrompt()` is now fully tool-aware with three distinct paths (leaf no-tools, coordinator no-tools, coordinator with-tools)
 
 ---
@@ -357,6 +379,7 @@ roots -a 2 "Compare A and B. Delegate each to a subagent with a short name."
 ### Dependencies
 
 - `@earendil-works/pi-coding-agent` — pi's SDK (`createAgentSession`, `DefaultResourceLoader`, etc.)
+- `log-update` — Live-updating terminal output (handles erasing/diffing/synchronized output)
 - `typebox` — Schema definitions (transitive dep of pi, also listed directly)
 - `tsx` — TypeScript execution (dev dependency)
 

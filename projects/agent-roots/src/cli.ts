@@ -190,6 +190,7 @@ export async function main() {
 }
 
 main().catch((err) => {
+  releaseStdout();
   console.error("\x1b[31mFatal:\x1b[0m", err);
   process.exit(1);
 });

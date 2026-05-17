@@ -1,5 +1,19 @@
 import type { AgentNode, TreeState } from "./types.js";
-import { writeStdout } from "./stdout.js";
+import { rawWrite } from "./stdout.js";
+import { createLogUpdate } from "log-update";
+
+// Stream wrapper that always writes via rawWrite (bypasses stdout guard).
+// columns/rows set to very large values to prevent log-update from
+// wrapping tree lines or clipping tree height — the terminal scrolls
+// naturally. isTTY enables synchronized output to prevent flicker.
+const treeStream = {
+  write: rawWrite,
+  get columns() { return 9999; },
+  get rows() { return 9999; },
+  get isTTY() { return process.stdout.isTTY; },
+};
+
+const render = createLogUpdate(treeStream as any, { showCursor: true });
 
 const STATUS_ICONS: Record<string, string> = {
   pending: "⏳",
@@ -47,15 +61,7 @@ function renderNode(
 
   lines.push(line);
 
-  // Show brief output preview for success nodes
-  if (node.status === "success" && node.output) {
-    const preview = truncate(node.output, 56);
-    const childConnector =
-      node.children.length > 0 ? "│" : " ";
-    lines.push(
-      `${prefix}${isLast ? "    " : "│   "}${childConnector}  \x1b[2m${preview}\x1b[0m`,
-    );
-  }
+  // Output preview intentionally omitted — suspected cause of terminal flickering.
 
   const childPrefix = prefix + (isLast ? "    " : "│   ");
   node.children.forEach((childId, i) => {
@@ -149,49 +155,41 @@ export function renderTreeText(state: TreeState): string {
   return lines.join("\n");
 }
 
-// Track state for live rendering
-let previousLineCount = 0;
-let previousTreeText = "";
+// Track the last rendered string so we can skip no-op updates.
+let lastRendered = "";
 
 export function liveRender(state: TreeState): void {
   const tree = renderTreeText(state);
 
-  // No subagents yet — show a compact status line at the top
+  // No subagents yet — show a compact status line
   if (!tree) {
     const root = state.rootId ? state.nodes.get(state.rootId) : null;
     if (root) {
       const statusLine = `\x1b[1m🌳 roots\x1b[0m  \x1b[2mbudget=${root.maxAgents}\x1b[0m` +
         (root.toolNames.length > 0 ? ` \x1b[2m[${root.toolNames.join(", ")}]\x1b[0m` : "") +
         ` \x1b[2m(thinking...)\x1b[0m`;
-      if (statusLine !== previousTreeText) {
-        previousTreeText = statusLine;
-        writeStdout(`\x1b[H\x1b[J${statusLine}\n`);
-        previousLineCount = 2;
+      if (statusLine !== lastRendered) {
+        lastRendered = statusLine;
+        render(statusLine);
       }
     }
     return;
   }
 
   // Skip if unchanged
-  if (tree === previousTreeText) return;
-  previousTreeText = tree;
-
-  // Use absolute positioning to avoid cursor drift from interleaved output
-  writeStdout(`\x1b[H\x1b[J`);
-  writeStdout(tree + "\n");
-  previousLineCount = tree.split("\n").length + 1;
+  if (tree === lastRendered) return;
+  lastRendered = tree;
+  render(tree);
 }
 
 export function finalRender(state: TreeState): void {
-  // Clear live render area
-  if (previousLineCount > 0) {
-    writeStdout(`\x1b[${previousLineCount}A\x1b[J`);
-    previousLineCount = 0;
-    previousTreeText = "";
-  }
+  // Clear the live-update region and reset state so subsequent writes
+  // (the final answer) start fresh at the current cursor position.
+  render.clear();
+  lastRendered = "";
 
   const tree = renderTreeText(state);
   if (tree) {
-    writeStdout(tree + "\n\n");
+    rawWrite(tree + "\n\n");
   }
 }
