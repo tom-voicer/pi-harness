@@ -1,0 +1,42 @@
+# Simple if/else using the `if` property on tasks
+document:
+  dsl: 1.0.0
+  taskQueue: zigflow
+  workflowType: if-else-demo
+  version: 1.0.0
+  title: If/Else Demo
+  summary: Conditional execution with the `if` task property
+
+do:
+  - setup:
+      set:
+        score: 85
+
+  # `if` makes the task execute only when the condition is true.
+  # Paired with `then: end` to stop the workflow early.
+  - gradeA:
+      if: "${ $data.score >= 90 }"
+      set:
+        grade: A
+        remark: "Outstanding! 🌟"
+      then: end
+
+  - gradeB:
+      if: "${ $data.score >= 70 }"
+      set:
+        grade: B
+        remark: "Good job! 👍"
+      then: end
+
+  - gradeC:
+      if: "${ $data.score >= 50 }"
+      set:
+        grade: C
+        remark: "Room for improvement 📚"
+      then: end
+
+  # Fallback — no `if`, always runs if nothing above ended the workflow
+  - gradeF:
+      set:
+        grade: F
+        remark: "Needs work 💪"

@@ -1,0 +1,44 @@
+# Fork — run multiple branches concurrently
+document:
+  dsl: 1.0.0
+  taskQueue: zigflow
+  workflowType: parallel-demo
+  version: 1.0.0
+  title: Parallel (Fork) Demo
+  summary: Runs three branches concurrently and collects all results
+
+do:
+  - fanOut:
+      export:
+        as: "${ $context + { forkResults: . } }"
+      fork:
+        compete: false   # false = collect all; true = keep only winner
+        branches:
+          - fetchPosts:
+              call: http
+              with:
+                method: get
+                endpoint: https://jsonplaceholder.typicode.com/posts/1
+
+          - waitAndLog:
+              do:
+                - pause:
+                    wait:
+                      seconds: 2
+                - finish:
+                    set:
+                      waited: true
+                      message: "Done after 2s wait"
+
+          - compute:
+              do:
+                - step1:
+                    set:
+                      doubled: "${ 21 * 2 }"
+                - step2:
+                    set:
+                      answer: "${ .doubled }"
+
+  - summarize:
+      set:
+        branches: "${ $context.forkResults }"

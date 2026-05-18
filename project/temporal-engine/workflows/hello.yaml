@@ -1,0 +1,16 @@
+# Simplest possible Zigflow workflow
+document:
+  dsl: 1.0.0
+  taskQueue: zigflow
+  workflowType: hello-world
+  version: 1.0.0
+  title: Hello World
+  summary: A minimal workflow that sets a message
+
+do:
+  - greet:
+      output:
+        as:
+          greeting: ${ .message }
+      set:
+        message: "Hello from Zigflow! 🎸"
