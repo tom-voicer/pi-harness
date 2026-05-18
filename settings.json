@@ -1,4 +1,8 @@
 {
   "lastChangelogVersion": "0.75.3",
-  "defaultThinkingLevel": "xhigh"
+  "defaultThinkingLevel": "xhigh",
+  "packages": [
+    "npm:pi-subagents",
+    "npm:pi-intercom"
+  ]
 }
