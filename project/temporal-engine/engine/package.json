@@ -1,0 +1,22 @@
+{
+  "name": "temporal-engine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dynamic workflow executor — runs JSON workflow definitions on Temporal",
+  "scripts": {
+    "worker": "ts-node src/worker.ts",
+    "test": "ts-node ../test/smoke.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@temporalio/activity": "^1.11.7",
+    "@temporalio/client": "^1.11.7",
+    "@temporalio/worker": "^1.11.7",
+    "@temporalio/workflow": "^1.11.7"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.0"
+  }
+}
