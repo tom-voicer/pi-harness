@@ -237,9 +237,25 @@ make test
 ## Commands
 
 ```
-make up       Start Temporal + UI (Docker)
-make down     Stop Temporal
-make worker   Start engine worker
-make test     Run smoke test (starts a workflow, queries status, awaits result)
-make install  Install engine dependencies
+make up        Start Temporal + UI (Docker)
+make down      Stop Temporal
+make worker    Start engine worker
+make install   Install engine dependencies
+make run WF=../test/demo.json    Run a workflow from a JSON file
+```
+
+### CLI usage
+
+```bash
+# From a file
+npx ts-node src/cli-run.ts ../test/demo.json
+
+# Inline JSON
+npx ts-node src/cli-run.ts --inline '{"name":"test","steps":[{"type":"log","message":"hi"}]}'
+
+# From stdin
+echo '{"name":"test","steps":[{"type":"log","message":"hi"}]}' | npx ts-node src/cli-run.ts -
+
+# With make (from project root)
+make run WF=../test/demo.json
 ```

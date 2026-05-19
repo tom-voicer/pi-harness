@@ -22,6 +22,9 @@ worker:
 test:
 	cd engine && npx ts-node ../test/smoke.ts
 
+run:
+	cd engine && npx ts-node src/cli-run.ts $(WF)
+
 build:
 	cd engine && npx tsc
 
