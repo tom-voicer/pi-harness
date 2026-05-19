@@ -220,6 +220,11 @@ export async function workflowRunner(input: WorkflowDefinition): Promise<{
   stepCounter = 0;
 
   const ctx: ExecutionContext = { vars: {} };
+
+  // Inject external input if provided
+  if (input.input) {
+    ctx.vars.input = input.input;
+  }
   const results = await executeSteps(input.steps, ctx);
 
   progress.status = 'completed';

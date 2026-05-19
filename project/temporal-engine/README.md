@@ -42,9 +42,10 @@ The engine is designed to be embedded in a larger service (API + DB) that you'll
 ```typescript
 import { start, status, result, list, cancel } from "./engine";
 
-// Start a workflow — returns immediately
+// Start a workflow with external input
 const { id } = await start({
   name: "order-pipeline",
+  input: { userId: 42, tier: "premium" },
   steps: [
     { type: "set",  variable: "threshold", value: 500 },
     { type: "log",  message: "Starting workflow for {{vars.customer}}" },
@@ -101,6 +102,7 @@ await cancel(id);
 |-------|------|----------|-------------|
 | `name` | string | yes | Display name for the workflow |
 | `steps` | Step[] | yes | Ordered list of steps to execute |
+| `input` | object | no | External data passed at trigger time, available as `{{vars.input.x}}` in expressions |
 
 ### Step types
 
@@ -130,13 +132,16 @@ await cancel(id);
 
 ### Variable references
 
-Use `{{vars.x.y}}` to access variables set by `set` steps or injected during execution. Only available for string-typed step properties (`message`, `url`). Type-typed fields like `condition` values, `duration`, and `over` arrays are passed as literal values.
+Use `{{vars.x.y}}` to access variables set by `set` steps or injected via `input`. Works in any string field (`message`, `url`).
 
 ```
+{{vars.input.userId}}            — external input passed at trigger time
 {{vars.customer.name}}           — dotted path access
 {{vars.items}}                   — array reference (for loop over)
 {{vars.threshold}}               — number reference (in conditions)
 ```
+
+Type-typed fields like `condition` values, `duration`, and `over` arrays are passed as-is.
 
 ### Step result shape
 
@@ -250,11 +255,17 @@ make run WF=../test/demo.json    Run a workflow from a JSON file
 # From a file
 npx ts-node src/cli-run.ts ../test/demo.json
 
+# From a file with external input
+npx ts-node src/cli-run.ts ../test/demo.json -i '{"userId":42,"tier":"premium"}'
+
 # Inline JSON
 npx ts-node src/cli-run.ts --inline '{"name":"test","steps":[{"type":"log","message":"hi"}]}'
 
+# Inline with input
+npx ts-node src/cli-run.ts --inline '...' -i '{"key":"value"}'
+
 # From stdin
-echo '{"name":"test","steps":[{"type":"log","message":"hi"}]}' | npx ts-node src/cli-run.ts -
+echo '{"name":"test",...}' | npx ts-node src/cli-run.ts -
 
 # With make (from project root)
 make run WF=../test/demo.json

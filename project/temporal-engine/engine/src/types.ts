@@ -70,6 +70,7 @@ export type Step =
 export interface WorkflowDefinition {
   name: string;
   steps: Step[];
+  input?: Record<string, unknown>;
 }
 
 // ─── Execution context ────────────────────────────────────────
