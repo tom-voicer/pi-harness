@@ -74,7 +74,7 @@ export default function (pi: ExtensionAPI) {
         "",
         "1. Review the changes above.",
         "2. Write a concise, conventional commit message (e.g., `feat(scope): description` or `fix: description`). Keep the subject line under 72 chars.",
-        "3. If there are unstaged changes, stage them first: `git add -A`",
+        "3. **Only stage and commit changes that are related to the project you are currently working on.** Do NOT commit unrelated changes, changes in other projects, or files outside the current project scope. Use `git add <specific-files>` or `git add -A .` within the project directory, NOT a bare `git add -A` at the repo root.",
         "4. Commit: `git commit -m \"...\"` (use a multi-line message with body if needed, via `git commit -m \"subject\" -m \"body\"`)",
         "5. Push: `git push`",
         "",
