@@ -12,8 +12,7 @@ import {
   evaluateCondition,
   setVariable,
   countSteps,
-} from './executor';
-import type {
+} from './executor';import type {
   WorkflowDefinition,
   ExecutionContext,
   StepResult,
@@ -21,7 +20,7 @@ import type {
   WorkflowStatus,
 } from './types';
 
-const { logActivity, httpActivity } = proxyActivities<typeof activities>({
+const { logActivity, httpActivity, customNodeActivity } = proxyActivities<typeof activities>({
   startToCloseTimeout: '2 minutes',
   retry: { maximumAttempts: 1 },
 });
@@ -54,13 +53,27 @@ let stepCounter = 0;
 
 // ─── Recursive step executor ─────────────────────────────────
 
+/** Interpolate {{vars.x}} in all string fields of a step object (for custom nodes). */
+function interpolateStepFields(step: Record<string, unknown>, ctx: ExecutionContext): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(step)) {
+    if (typeof value === 'string') {
+      result[key] = interpolate(value, ctx);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 async function executeSteps(
   steps: import('./types').Step[],
   ctx: ExecutionContext,
 ): Promise<StepResult[]> {
   const results: StepResult[] = [];
 
-  for (const step of steps) {
+  for (const rawStep of steps) {
+    const step = rawStep as any;
     stepCounter++;
     progress.currentStep = stepCounter;
 
@@ -81,11 +94,11 @@ async function executeSteps(
           const url = interpolate(step.url, ctx);
           const hdrs = step.headers
             ? Object.fromEntries(
-                Object.entries(step.headers).map(([k, v]) => [k, interpolate(v, ctx)]),
+                Object.entries(step.headers).map(([k, v]) => [k, interpolate(String(v), ctx)]),
               )
             : undefined;
           const res = await httpActivity(
-            interpolate(step.method, ctx) as string,
+            interpolate(step.method, ctx),
             url,
             hdrs,
             step.body,
@@ -142,7 +155,7 @@ async function executeSteps(
 
         case 'fork': {
           log.info(`⚡ fork: ${step.branches.length} branches`);
-          const branchPromises = step.branches.map((branch) => {
+          const branchPromises = step.branches.map((branch: any) => {
             const branchCtx: ExecutionContext = { vars: { ...ctx.vars } };
             return executeSteps(branch.steps, branchCtx);
           });
@@ -155,7 +168,9 @@ async function executeSteps(
         }
 
         default:
-          throw new Error(`Unknown step type: ${(step as any).type}`);
+          // Interpolate all string fields in the step, then dispatch to custom node handler
+          const interpolatedStep = interpolateStepFields(step, ctx);
+          output = await customNodeActivity(step.type, interpolatedStep, ctx.vars);
       }
 
       progress.completedSteps++;

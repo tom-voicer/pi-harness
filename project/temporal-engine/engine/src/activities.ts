@@ -44,3 +44,20 @@ export async function httpActivity(
     data,
   };
 }
+
+/**
+ * Dispatch a custom node to its registered handler.
+ * The registry is populated at worker startup (before Worker.create).
+ */
+export async function customNodeActivity(
+  nodeType: string,
+  step: Record<string, unknown>,
+  vars: Record<string, unknown>,
+): Promise<string> {
+  const { getHandler } = require('./nodes/registry');
+  const handler = getHandler(nodeType);
+  if (!handler) {
+    throw new Error(`Unknown custom node type: "${nodeType}"`);
+  }
+  return handler(step, { vars });
+}

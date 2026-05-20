@@ -1,4 +1,4 @@
-const { start, status, result, disconnect } = require('./client');
+const client = require('./client');
 const fs = require('fs');
 
 async function run(def: any) {
@@ -6,19 +6,19 @@ async function run(def: any) {
   if (def.input) {
     console.log(`   Input: ${JSON.stringify(def.input)}`);
   }
-  const { id } = await start(def);
+  const { id } = await client.start(def);
   console.log(`   ID: ${id}\n`);
 
   for (let i = 0; i < 45; i++) {
     await new Promise(r => setTimeout(r, 1000));
-    const s = await status(id);
+    const s = await client.status(id);
     const pct = s.totalSteps ? Math.round((s.completedSteps ?? 0) / s.totalSteps * 100) : 0;
     process.stdout.write(`\r   [${s.status}] step ${s.currentStep}/${s.totalSteps} (${pct}%)`);
     if (s.status !== 'running') break;
   }
   console.log('');
 
-  const r = await result(id);
+  const r = await client.result(id);
   console.log(`\n📊 ${r.status} — ${r.stepsExecuted} steps`);
   if (r.results) {
     for (const s of r.results) {
@@ -27,7 +27,7 @@ async function run(def: any) {
   }
   if (r.error) console.log(`   ❌ ${r.error}`);
 
-  await disconnect();
+  await client.disconnect();
 }
 
 // CLI
