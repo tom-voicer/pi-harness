@@ -19,6 +19,9 @@ install:
 worker:
 	cd engine && npx ts-node src/worker.ts
 
+worker-nodes:
+	cd engine && npx ts-node src/worker-with-nodes.ts
+
 test:
 	cd engine && npx ts-node ../test/smoke.ts
 

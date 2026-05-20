@@ -178,6 +178,58 @@ If any step fails, the workflow stops immediately. The error propagates to the `
 
 Variables (`set`) are scoped to their execution context. A variable set inside an `if/then` block is visible to steps after that block. A variable set inside a `for` loop iteration persists across iterations. A variable set inside a `fork` branch is visible only within that branch.
 
+## Custom Nodes
+
+Register new step types as Temporal activities. Handlers receive the step object (with `{{vars}}` already interpolated) and return a string result. Registration must happen before the worker starts.
+
+### Registering a custom node
+
+```typescript
+import { registerNode } from './nodes/registry';
+import type { CustomNodeHandler } from './nodes/registry';
+
+const myHandler: CustomNodeHandler = async (step, ctx) => {
+  // step — the step object from JSON, with {{vars}} already interpolated
+  // ctx.vars — read-only snapshot of workflow state
+  const query = step.query as string;
+  const results = await fetch(`https://api.example.com?q=${query}`);
+  return JSON.stringify(await results.json());
+};
+
+registerNode('my_api_call', myHandler);
+```
+
+Then use it in workflow JSON:
+```json
+{ "type": "my_api_call", "query": "search for {{vars.input.topic}}" }
+```
+
+Start the worker with nodes registered:
+```bash
+npx ts-node src/worker-with-nodes.ts
+```
+
+### Built-in library nodes
+
+Three nodes ship with the engine, adapted from pi's web tools:
+
+| Node | Step fields | Does |
+|------|------------|------|
+| `web_search` | `query` (string), `max_results?` (number) | SearXNG search (configurable URL) + DuckDuckGo fallback |
+| `web_crawl` | `start_url` (string), `depth?`, `max_pages?`, `path_prefix?` | Crawls a site, extracts pages with Readability |
+| `web_extract` | `urls` (string or array), `format?` ("markdown" or "text") | Extracts clean content from URLs |
+
+```json
+{
+  "name": "Research Pipeline",
+  "steps": [
+    { "type": "web_search", "query": "{{vars.input.topic}}", "max_results": 3 },
+    { "type": "web_crawl", "start_url": "https://zigflow.dev", "depth": 1, "max_pages": 5 },
+    { "type": "web_extract", "urls": ["https://zigflow.dev/docs/dsl/intro"] }
+  ]
+}
+```
+
 ---
 
 ## How the future service sits on top
@@ -213,11 +265,19 @@ temporal-engine/
 │   └── src/
 │       ├── types.ts           # All shared types
 │       ├── executor.ts        # Pure logic: resolveValue, evaluateCondition, countSteps
-│       ├── activities.ts      # Temporal activities: httpActivity, logActivity
+│       ├── activities.ts      # Temporal activities: httpActivity, logActivity, customNodeActivity
 │       ├── workflow.ts        # The one workflow + progress query handler
-│       ├── worker.ts          # Worker process entry
+│       ├── worker.ts          # Worker entry (exports registerNode)
+│       ├── worker-with-nodes.ts  # Worker with library nodes registered
 │       ├── client.ts          # Engine API: start, status, result, list, cancel
-│       └── index.ts           # Public exports
+│       ├── cli-run.ts         # CLI: submit workflows from file/inline/stdin
+│       ├── index.ts           # Public exports
+│       └── nodes/
+│           ├── registry.ts    # registerNode(), getHandler(), listCustomNodes()
+│           └── library/
+│               ├── web-search.ts   # SearXNG + DuckDuckGo search
+│               ├── web-crawl.ts    # Site crawler with Readability
+│               └── web-extract.ts  # Single-URL content extractor
 └── test/
     └── smoke.ts               # End-to-end test: start → status → result
 ```
@@ -245,6 +305,7 @@ make test
 make up        Start Temporal + UI (Docker)
 make down      Stop Temporal
 make worker    Start engine worker
+make worker-nodes  Start worker with library nodes (web_search, web_crawl, web_extract)
 make install   Install engine dependencies
 make run WF=../test/demo.json    Run a workflow from a JSON file
 ```
