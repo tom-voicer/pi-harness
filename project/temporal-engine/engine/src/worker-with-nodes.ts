@@ -8,14 +8,16 @@ import { registerNode } from './nodes/registry';
 import { createWebSearchNode } from './nodes/library/web-search';
 import { createWebCrawlNode } from './nodes/library/web-crawl';
 import { createWebExtractNode } from './nodes/library/web-extract';
+import { createWorkflowRunNode } from './nodes/library/workflow-run';
 
 // Register custom nodes BEFORE Worker.create()
 const searxngUrl = process.env.SEARXNG_URL || 'http://127.0.0.1:8081';
 registerNode('web_search', createWebSearchNode({ searxngUrl }));
 registerNode('web_crawl', createWebCrawlNode());
 registerNode('web_extract', createWebExtractNode());
+registerNode('workflow_run', createWorkflowRunNode());
 
-console.log(`Custom nodes registered: web_search (${searxngUrl}), web_crawl, web_extract`);
+console.log(`Custom nodes registered: web_search (${searxngUrl}), web_crawl, web_extract, workflow_run`);
 
 async function main() {
   const worker = await Worker.create({

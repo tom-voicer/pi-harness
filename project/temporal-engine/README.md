@@ -115,6 +115,61 @@ await cancel(id);
 | `if` | `condition` (Condition), `then` (Step[]), `else?` (Step[]) | Conditional branching |
 | `for` | `over` (array or var ref), `as` (string), `steps` (Step[]) | Iterate over array, sequential |
 | `fork` | `branches` ({name, steps}[]) | Run branches in parallel |
+| `workflow_run` | `definition?`, `workflow_file?`, `workflow_id?`, `input?`, `result_as?` | Run a sub-workflow (as Temporal child workflow) |
+
+### workflow_run — Sub-workflow Execution
+
+Runs another workflow as a [Temporal Child Workflow](https://docs.temporal.io/child-workflows). The child inherits the parent's task queue and is linked in Temporal's parent-child execution tree (cancellation propagates, UI shows the hierarchy).
+
+**Resolution strategies** (one required):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `definition` | WorkflowDefinition | Inline workflow definition |
+| `workflow_file` | string | Path to a JSON workflow file (resolved relative to cwd) |
+| `workflow_id` | string | Future: lookup workflow by ID from DB (not yet implemented) |
+
+**Optional fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `input` | object | External input passed to the child workflow (merged with child's own input) |
+| `result_as` | string | Variable name to save the child's result into (accessible as `{{vars.result_as}}` downstream) |
+
+The child result shape saved into `result_as`:
+```json
+{ "name": "sub-workflow", "status": "completed", "stepsExecuted": 5, "results": [...] }
+```
+
+**Examples:**
+
+```json
+// Inline definition
+{ "type": "workflow_run",
+  "definition": {
+    "name": "Fraud Check",
+    "steps": [
+      { "type": "log", "message": "Checking {{vars.input.userId}}" },
+      { "type": "set", "variable": "approved", "value": true }
+    ]
+  },
+  "input": { "userId": "{{vars.input.userId}}" },
+  "result_as": "fraud_result"
+}
+
+// From file (path relative to engine/ directory)
+{ "type": "workflow_run",
+  "workflow_file": "../test/fraud-check.json",
+  "input": { "userId": 42, "tier": "premium" },
+  "result_as": "fraud_result"
+}
+
+// From DB (future)
+{ "type": "workflow_run",
+  "workflow_id": "wf-abc123",
+  "input": { "customer": "acme" }
+}
+```
 
 ### Condition types
 
@@ -149,7 +204,7 @@ Each step produces:
 ```typescript
 {
   step: number,          // Step index (1-based, flattened across nesting)
-  type: string,          // "set" | "log" | "http" | "sleep" | "if" | "for" | "fork"
+  type: string,          // "set" | "log" | "http" | "sleep" | "if" | "for" | "fork" | "workflow_run" | custom node type
   ok: boolean,           // Did it succeed?
   output: string,        // String representation of the result
   durationMs: number     // How long it took
@@ -178,9 +233,21 @@ If any step fails, the workflow stops immediately. The error propagates to the `
 
 Variables (`set`) are scoped to their execution context. A variable set inside an `if/then` block is visible to steps after that block. A variable set inside a `for` loop iteration persists across iterations. A variable set inside a `fork` branch is visible only within that branch.
 
+### `workflow_run` — child workflows
+
+Each `workflow_run` step starts a [Temporal Child Workflow](https://docs.temporal.io/child-workflows). The child gets its own execution context — it does **not** inherit the parent's variables. Pass data explicitly via `input`. To bring results back, use `result_as` — it saves the child's `{ name, status, stepsExecuted, results }` into the parent's variable context.
+
+Child workflows count as **1 step** in the parent's progress (via `countSteps`). The child tracks its own progress independently via its own Temporal query.
+
+Fail-fast applies: if a child workflow fails, the parent stops immediately (same as any other step failure). Cancelling the parent cascades to all running children via Temporal's native cancellation propagation.
+
+Child workflows run on the same task queue as the parent (`dynamic-workflows`). For file-based definitions, the JSON file is read by the `resolveWorkflowDefActivity` activity (subject to the 2-minute activity timeout) — inline definitions bypass this entirely.
+
 ## Custom Nodes
 
 Register new step types as Temporal activities. Handlers receive the step object (with `{{vars}}` already interpolated) and return a string result. Registration must happen before the worker starts.
+
+> **Note:** The built-in `workflow_run` step also registers via this pattern for discoverability, but its actual execution uses Temporal's native `executeChild()` for proper parent-child visibility, cancellation cascade, and no activity timeout constraints.
 
 ### Registering a custom node
 
@@ -278,8 +345,15 @@ temporal-engine/
 │               ├── web-search.ts   # SearXNG + DuckDuckGo search
 │               ├── web-crawl.ts    # Site crawler with Readability
 │               └── web-extract.ts  # Single-URL content extractor
+│               └── workflow-run.ts # Sub-workflow execution (metadata)
 └── test/
-    └── smoke.ts               # End-to-end test: start → status → result
+    ├── demo.json               # Simple demo workflow
+    ├── order-fulfillment.json  # Complex multi-branch workflow
+    ├── research-pipeline.json  # Uses custom nodes
+    ├── fraud-check.json        # Child workflow (used by sub-workflow tests)
+    ├── inventory-check.json    # Child workflow (used by sub-workflow tests)
+    ├── sub-workflow-inline.json    # Parent → child via inline definition
+    └── sub-workflow-from-file.json # Parent → child via JSON file
 ```
 
 ## Quickstart
@@ -305,9 +379,11 @@ make test
 make up        Start Temporal + UI (Docker)
 make down      Stop Temporal
 make worker    Start engine worker
-make worker-nodes  Start worker with library nodes (web_search, web_crawl, web_extract)
+make worker-nodes  Start worker with library nodes (web_search, web_crawl, web_extract, workflow_run)
 make install   Install engine dependencies
 make run WF=../test/demo.json    Run a workflow from a JSON file
+make test-sub-inline  Run sub-workflow demo (inline definition)
+make test-sub-file    Run sub-workflow demo (from file + parallel)
 ```
 
 ### CLI usage

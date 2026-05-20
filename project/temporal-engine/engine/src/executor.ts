@@ -101,6 +101,9 @@ export function countSteps(steps: Step[]): number {
           count += countSteps(branch.steps);
         }
         break;
+      case 'workflow_run':
+        // Count as 1 step — child workflow tracks its own progress
+        break;
     }
   }
   return count;

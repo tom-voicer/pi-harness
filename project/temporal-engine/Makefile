@@ -28,6 +28,12 @@ test:
 run:
 	cd engine && npx ts-node src/cli-run.ts $(WF)
 
+test-sub-inline:
+	cd engine && npx ts-node src/cli-run.ts ../test/sub-workflow-inline.json
+
+test-sub-file:
+	cd engine && npx ts-node src/cli-run.ts ../test/sub-workflow-from-file.json
+
 build:
 	cd engine && npx tsc
 

@@ -46,6 +46,29 @@ export async function httpActivity(
 }
 
 /**
+ * Resolve a workflow definition from a file path or workflow ID.
+ * Called by the workflow_run step to load sub-workflow definitions at runtime.
+ */
+export async function resolveWorkflowDefActivity(
+  workflowFile?: string,
+  workflowId?: string,
+): Promise<{ name: string; steps: unknown[]; input?: Record<string, unknown> }> {
+  if (workflowFile) {
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const resolved = path.isAbsolute(workflowFile) ? workflowFile : path.resolve(workflowFile);
+    console.log(`[workflow_run] Loading definition from: ${resolved}`);
+    const content = await fs.readFile(resolved, 'utf-8');
+    return JSON.parse(content);
+  }
+  if (workflowId) {
+    // Future: DB lookup — look up the definition by its stored ID
+    throw new Error(`Workflow ID lookup not yet implemented: "${workflowId}". Use "definition" or "workflow_file" instead.`);
+  }
+  throw new Error('workflow_run requires one of: definition, workflow_file, workflow_id');
+}
+
+/**
  * Dispatch a custom node to its registered handler.
  * The registry is populated at worker startup (before Worker.create).
  */

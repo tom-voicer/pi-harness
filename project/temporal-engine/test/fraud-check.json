@@ -1,0 +1,31 @@
+{
+  "name": "Fraud Check",
+  "steps": [
+    { "type": "log", "message": "🔍 Running fraud check for {{vars.input.userId}}" },
+    { "type": "sleep", "duration": 1 },
+    {
+      "type": "if",
+      "condition": { "type": "eq", "left": "{{vars.input.tier}}", "right": "premium" },
+      "then": [
+        { "type": "set", "variable": "risk_score", "value": 5 },
+        { "type": "log", "message": "  Premium tier — fast-tracked, risk={{vars.risk_score}}" }
+      ],
+      "else": [
+        { "type": "set", "variable": "risk_score", "value": 25 },
+        { "type": "log", "message": "  Standard check — risk={{vars.risk_score}}" }
+      ]
+    },
+    {
+      "type": "if",
+      "condition": { "type": "lt", "left": "{{vars.risk_score}}", "right": 20 },
+      "then": [
+        { "type": "set", "variable": "approved", "value": true },
+        { "type": "log", "message": "✅ Approved" }
+      ],
+      "else": [
+        { "type": "set", "variable": "approved", "value": false },
+        { "type": "log", "message": "🚩 Flagged for manual review" }
+      ]
+    }
+  ]
+}

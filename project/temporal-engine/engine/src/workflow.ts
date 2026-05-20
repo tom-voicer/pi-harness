@@ -1,5 +1,6 @@
 import {
   proxyActivities,
+  executeChild,
   sleep,
   log,
   setHandler,
@@ -20,7 +21,7 @@ import {
   WorkflowStatus,
 } from './types';
 
-const { logActivity, httpActivity, customNodeActivity } = proxyActivities<typeof activities>({
+const { logActivity, httpActivity, customNodeActivity, resolveWorkflowDefActivity } = proxyActivities<typeof activities>({
   startToCloseTimeout: '2 minutes',
   retry: { maximumAttempts: 1 },
 });
@@ -164,6 +165,47 @@ async function executeSteps(
             results.push(...br);
           }
           output = `${step.branches.length} branches completed`;
+          break;
+        }
+
+        // ── sub-workflow ────────────────────────────────
+        case 'workflow_run': {
+          let childDef: WorkflowDefinition;
+
+          if (step.definition) {
+            childDef = step.definition as WorkflowDefinition;
+          } else if (step.workflow_file) {
+            const filePath = interpolate(step.workflow_file, ctx);
+            childDef = await resolveWorkflowDefActivity(filePath, undefined) as WorkflowDefinition;
+          } else if (step.workflow_id) {
+            const wfId = interpolate(step.workflow_id, ctx);
+            childDef = await resolveWorkflowDefActivity(undefined, wfId) as WorkflowDefinition;
+          } else {
+            throw new Error('workflow_run requires one of: definition, workflow_file, workflow_id');
+          }
+
+          // Merge external input into the child definition
+          if (step.input) {
+            const mergedInput: Record<string, unknown> = { ...(childDef.input || {}) };
+            for (const [k, v] of Object.entries(step.input)) {
+              mergedInput[k] = resolveValue(v, ctx);
+            }
+            childDef = { ...childDef, input: mergedInput };
+          }
+
+          log.info(`🔗 workflow_run: "${childDef.name}"`);
+
+          const childResult = await executeChild(workflowRunner, {
+            args: [childDef],
+            workflowId: `run-${childDef.name.replace(/\s+/g, '-')}-${stepCounter}`,
+          });
+
+          // Optionally save child result into parent variable context
+          if (step.result_as) {
+            setVariable(ctx, step.result_as, childResult);
+          }
+
+          output = JSON.stringify(childResult);
           break;
         }
 

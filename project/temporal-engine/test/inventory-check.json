@@ -1,0 +1,10 @@
+{
+  "name": "Inventory Check",
+  "steps": [
+    { "type": "log", "message": "📦 Checking inventory for {{vars.input.sku}}" },
+    { "type": "set", "variable": "in_stock", "value": true },
+    { "type": "set", "variable": "quantity", "value": 42 },
+    { "type": "set", "variable": "warehouse", "value": "WH-EAST" },
+    { "type": "log", "message": "✅ Inventory check complete: {{vars.quantity}} units in {{vars.warehouse}}" }
+  ]
+}

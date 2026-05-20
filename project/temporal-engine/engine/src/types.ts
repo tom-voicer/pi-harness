@@ -56,6 +56,15 @@ export interface ForkStep {
   branches: { name: string; steps: Step[] }[];
 }
 
+export interface WorkflowRunStep {
+  type: 'workflow_run';
+  definition?: WorkflowDefinition;
+  workflow_file?: string;
+  workflow_id?: string;
+  input?: Record<string, unknown>;
+  result_as?: string;
+}
+
 export type Step =
   | SetStep
   | LogStep
@@ -63,7 +72,8 @@ export type Step =
   | SleepStep
   | IfStep
   | ForStep
-  | ForkStep;
+  | ForkStep
+  | WorkflowRunStep;
 
 // ─── Workflow definition ──────────────────────────────────────
 
