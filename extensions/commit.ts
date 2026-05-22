@@ -1,12 +1,12 @@
 /**
- * /commit — Summarize git changes, commit, and push.
+ * /commit — Summarize git changes, verify docs, commit, and push.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("commit", {
-    description: "Summarize git changes, commit, and push",
+    description: "Summarize git changes, commit, and push — verifies documentation is up to date before committing",
     handler: async (_args, ctx) => {
       await ctx.waitForIdle();
 
@@ -73,11 +73,12 @@ export default function (pi: ExtensionAPI) {
         "## Instructions",
         "",
         "1. Review the changes above.",
-        "2. Write a concise, conventional commit message (e.g., `feat(scope): description` or `fix: description`). Keep the subject line under 72 chars.",
-        "3. **Only stage and commit changes that are related to the project you are currently working on.** Do NOT commit unrelated changes, changes in other projects, or files outside the current project scope. Use `git add <specific-files>` or `git add -A .` within the project directory, NOT a bare `git add -A` at the repo root.",
-        "4. **Verify documentation:** Check that all changes are reflected in the project's documentation files (README.md, CHANGELOG.md, API docs, etc.). Update documentation before committing if the changes introduce new features, configurations, or breaking changes.",
-        "5. Commit: `git commit -m \"...\"` (use a multi-line message with body if needed, via `git commit -m \"subject\" -m \"body\"`)",
-        "6. Push: `git push`",
+        "2. **⚠️ VERIFY DOCUMENTATION (DO NOT SKIP):** Read the diff carefully. For every new feature, behavioral change, API surface change, config change, or architectural decision introduced — update the project's documentation files (README.md, AGENTS.md, CHANGELOG.md, or relevant docs/ files). If the diff touches a README or AGENTS.md, check that it accurately reflects the current state. **Documentation is as important as code. Never commit without updating docs.**",
+        "3. Write a concise, conventional commit message (e.g., `feat(scope): description` or `fix: description`). Keep the subject line under 72 chars. Mention documentation updates in the body if substantial.",
+        "4. **Only stage and commit changes that are related to the project you are currently working on.** Do NOT commit unrelated changes, changes in other projects, or files outside the current project scope. Use `git add <specific-files>` or `git add -A .` within the project directory, NOT a bare `git add -A` at the repo root.",
+        "5. **Re-verify docs one more time before committing** — check that README.md and AGENTS.md (if they exist in the project) are up to date with the changes you're about to commit.",
+        "6. Commit: `git commit -m \"...\"` (use a multi-line message with body if needed, via `git commit -m \"subject\" -m \"body\"`)",
+        "7. Push: `git push`",
         "",
         "Execute all steps. Do NOT ask for confirmation — just do it.",
       );

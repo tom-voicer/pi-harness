@@ -99,6 +99,10 @@ Registers the `web_search` tool. Uses the Tavily Search API. Supports `query`, `
 
 Registers the `web_extract` tool. Uses the Tavily Extract API to pull clean markdown/text from web pages. Supports single URLs, batch extraction (up to 20), relevance-based chunking, image/favicon extraction.
 
+### /commit (commit.ts)
+
+Registers the `/commit` command — summarizes git changes, verifies documentation is up to date, writes a conventional commit message, commits, and pushes. The command requires documentation updates for any new features, behavioral changes, API surface changes, config changes, or architectural decisions before allowing a commit.
+
 ---
 
 ## End Scripts
@@ -174,6 +178,7 @@ Shell script at [`bin/piper`](bin/piper). Convenience shortcut — wraps `pi -p 
 │   └── piper                    # piper-specific CLI shortcut
 ├── extensions/
 │   ├── agent-roles.ts           # --agent flag, system prompt injection, output constraints
+│   ├── commit.ts                # /commit — summarize, verify docs, commit, push
 │   ├── tavily-search.ts         # web_search tool
 │   └── tavily-extract.ts        # web_extract tool
 ├── end-scripts/
