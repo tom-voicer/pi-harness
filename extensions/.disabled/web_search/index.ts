@@ -3,7 +3,7 @@
  *
  * Search backends (tried in order):
  *   1. Local SearXNG (127.0.0.1:8081, or SEARXNG_URL env var)
- *   2. DuckDuckGo via duck-duck-scrape
+ *   2. DuckDuckGo direct API (filters out ads)
  *   3. Public SearXNG instances (raced)
  *
  * No API keys required. Set SEARXNG_URL env var for best results.
@@ -60,39 +60,114 @@ async function fetchWithTimeout(
 }
 
 // ===========================================================================
-// Backend 1: DuckDuckGo via duck-duck-scrape (primary fallback)
+// Backend 1: DuckDuckGo direct API (bypasses duck-duck-scrape to filter ads)
 // ===========================================================================
+// We call DDG's internal JSON API directly instead of using the duck-duck-scrape
+// library because that library drops the `da` (CSS class) field from results,
+// making it impossible to distinguish ads from organic results.
+// Ad results have da containing "result--ad"; we filter them out.
 
-let _ddgSearch: any = null;
+const DDG_DJS_URL = "https://links.duckduckgo.com/d.js";
 
-async function getDdgClient() {
-  if (!_ddgSearch) {
-    const dds = await import("duck-duck-scrape");
-    _ddgSearch = dds;
-  }
-  return _ddgSearch;
+// Regex to extract the main search results array from DDG's JS callback
+const SEARCH_REGEX =
+  /DDG\.pageLayout\.load\('d',(\[.+\])\);DDG\.duckbar\.load(?:Module)?\('/;
+
+interface DDGRawResult {
+  t?: string; // title
+  u?: string; // url
+  a?: string; // description
+  i?: string; // hostname
+  da?: string; // CSS class associations (e.g. "result result--ad")
+  n?: string; // pagination marker — skip
+  d?: string; // domain
 }
 
-async function ddgScrapeSearch(query: string): Promise<SearchResult[]> {
+async function ddgDirectSearch(query: string): Promise<SearchResult[]> {
+  // Lazily import just the utilities we need from duck-duck-scrape
+  const { getVQD, COMMON_HEADERS } = await import(
+    "duck-duck-scrape/lib/util.js"
+  );
+
   try {
-    const dds = await getDdgClient();
-    const response = await dds.search(query, {
-      safeSearch: dds.SafeSearchType.OFF,
+    // Step 1: Get a VQD token (required for the search API)
+    const vqd = await getVQD(query, "web", { headers: COMMON_HEADERS });
+
+    // Step 2: Build query params matching what the library sends
+    const params = new URLSearchParams({
+      q: query,
+      t: "D",
+      l: "en-us",
+      kl: "wt-wt",
+      s: "0",
+      dl: "en",
+      ct: "US",
+      bing_market: "en-US",
+      df: "",
+      vqd,
+      ex: "-2", // SafeSearch OFF
+      sp: "1",
+      bpa: "1",
+      biaexp: "b",
+      msvrtexp: "b",
+      nadse: "b",
+      eclsexp: "b",
+      tjsexp: "b",
     });
 
-    if (response.noResults || !response.results.length) return [];
+    // Step 3: Fetch from DDG's internal JSON API
+    const result = await fetchWithTimeout(`${DDG_DJS_URL}?${params}`, {
+      headers: {
+        ...COMMON_HEADERS,
+        Accept: "*/*",
+      },
+      timeout: 10_000,
+    });
 
-    return response.results.map((r: any) => ({
-      title: r.title ?? "",
-      url: r.url ?? "",
-      content: r.description ?? "",
-    }));
-  } catch (err: any) {
-    // Rate-limited or blocked
-    if (err.message?.includes("anomaly") || err.message?.includes("too quickly")) {
-      return []; // silent fallback to next backend
+    if ("error" in result) return [];
+    const body = await result.resp.text();
+
+    // Check for blocks
+    if (body.includes("DDG.deep.is506")) return [];
+    if (body.includes("DDG.deep.anomalyDetectionBlock")) return [];
+
+    // Step 4: Parse the JS callback to extract results
+    const match = SEARCH_REGEX.exec(body);
+    if (!match) return [];
+
+    const raw: DDGRawResult[] = JSON.parse(
+      match[1].replace(/\t/g, "    "),
+    );
+
+    // Step 5: Filter out ads and pagination markers, map to SearchResult
+    const results: SearchResult[] = [];
+    for (const r of raw) {
+      // Skip pagination markers
+      if ("n" in r) continue;
+
+      // Skip ads — da field contains "result--ad" class for sponsored results
+      if (r.da?.split(/\s+/).includes("result--ad")) continue;
+
+      // Skip placeholder/empty results
+      if (!r.t || !r.u) continue;
+
+      results.push({
+        title: r.t,
+        url: r.u,
+        content: r.a ?? "",
+      });
     }
-    throw err; // unexpected error
+
+    return results;
+  } catch (err: any) {
+    if (
+      err.message?.includes("anomaly") ||
+      err.message?.includes("too quickly")
+    ) {
+      return [];
+    }
+    // Don't throw — fall back to next backend silently
+    return [];
   }
 }
 
@@ -180,8 +255,8 @@ async function searchWeb(
     }
   }
 
-  // 2. Try DuckDuckGo via duck-duck-scrape
-  const ddgResults = await ddgScrapeSearch(query);
+  // 2. Try DuckDuckGo direct API (filters ads by da field)
+  const ddgResults = await ddgDirectSearch(query);
   if (ddgResults.length > 0) {
     return { results: ddgResults, source: "duckduckgo" };
   }
@@ -207,7 +282,7 @@ export default function (pi: ExtensionAPI) {
     name: "web_search",
     label: "Web Search",
     description:
-      "Search the web using DuckDuckGo, local SearXNG (set SEARXNG_URL), or public SearXNG instances. Returns results with titles, URLs, and content snippets.",
+      "Search the web using local SearXNG (set SEARXNG_URL), DuckDuckGo direct API (ads filtered), or public SearXNG instances. Returns results with titles, URLs, and content snippets.",
     promptSnippet: "Web search via local DDG/SearXNG — returns titles, URLs, and content",
     promptGuidelines: [
       "Use web_search when you need current, up-to-date information from the web.",

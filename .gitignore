@@ -16,3 +16,13 @@ bin/*
 convert
 write
 .DS_Store
+
+# Pi runtime state — local, not config
+intercom/
+missions/
+models-store.json
+mcp-cache.json
+pi-crash.log
+run-history.jsonl
+session-namer.json
+trust.json

@@ -1,9 +1,0 @@
-{
-  "name": "CLI Demo",
-  "steps": [
-    { "type": "set", "variable": "greeting", "value": "Hello from CLI" },
-    { "type": "log", "message": "{{vars.greeting}}" },
-    { "type": "sleep", "duration": 1 },
-    { "type": "log", "message": "Done!" }
-  ]
-}

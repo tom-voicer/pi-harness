@@ -105,5 +105,4 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  console.log("[context7] registered resolve_library_id + query_docs tools");
 }

@@ -15,8 +15,8 @@ Then set your API keys (pi stores them in `auth.json`, which is gitignored — n
 llm keys set openai
 llm keys set anthropic
 
-# Tavily web search (used by web_search / web_extract tools)
-export TAVILY_API_KEY="your-key"
+# Tavily web search (web_search / web_extract / web_crawl tools) — the API key
+# is configured inside extensions/tavily/index.ts
 ```
 
 ---
@@ -91,13 +91,17 @@ The agent system itself. Registers the `--agent` flag and the `/agent` interacti
 
 **Key design:** The output constraint (`⛔ OUTPUT CONSTRAINT — READ THIS LAST`) is appended *after* pi's base system prompt so it's the last thing the model reads, preventing the base prompt's "be helpful" from overriding agent-specific output rules.
 
-### web_search (tavily-search.ts)
+### tavily
 
-Registers the `web_search` tool. Uses the Tavily Search API. Supports `query`, `search_depth`, `max_results`, `include_answer`, `include_raw_content`.
+Consolidated web tools backed by the Tavily API (`@tavily/core`):
 
-### web_extract (tavily-extract.ts)
+| Tool | Purpose |
+|------|---------|
+| `web_search` | Real-time web search. Supports `query`, `search_depth`, `max_results`, `include_answer`, `include_raw_content` |
+| `web_extract` | Clean markdown/text extraction. Single URLs or batches (up to 20), relevance-based chunking, image/favicon extraction |
+| `web_crawl` | Agent-first site crawling with depth/page limits, path/domain filters, and per-page extraction instructions |
 
-Registers the `web_extract` tool. Uses the Tavily Extract API to pull clean markdown/text from web pages. Supports single URLs, batch extraction (up to 20), relevance-based chunking, image/favicon extraction.
+The previous self-hosted `web_search`, `web_extract`, and `web_crawl` extensions are retired to [`extensions/.disabled/`](extensions/.disabled/) and no longer load.
 
 ### /commit (commit.ts)
 
@@ -139,6 +143,14 @@ Shell piping techniques — composing commands with `|`, peeking at intermediate
 
 Reference for the `llm` CLI tool by Simon Willison — schema syntax (`--schema`, `--schema-multi`), templates, fragments, tools, logging, and all provider/model options.
 
+### describe-image
+
+Describe images using Google Gemini Vision — photos, screenshots, diagrams, UI mockups. Supports URLs and local files, with optional custom prompts.
+
+### kernel-browser
+
+Cloud browser automation via Kernel (onkernel.com) — sandboxed Chromium with anti-bot stealth, cookie persistence, Playwright scripts, screenshots, and live view.
+
 ---
 
 ## CLI
@@ -178,12 +190,18 @@ Shell script at [`bin/piper`](bin/piper). Convenience shortcut — wraps `pi -p 
 │   └── piper                    # piper-specific CLI shortcut
 ├── extensions/
 │   ├── agent-roles.ts           # --agent flag, system prompt injection, output constraints
+│   ├── cloudflare-docs.ts       # Cloudflare docs tool
 │   ├── commit.ts                # /commit — summarize, verify docs, commit, push
-│   ├── tavily-search.ts         # web_search tool
-│   └── tavily-extract.ts        # web_extract tool
+│   ├── context7/                # resolve_library_id + query_docs tools
+│   ├── email_me/                # email notification tool
+│   ├── local-search/            # local file search tools
+│   ├── tavily/                  # web_search, web_extract, web_crawl tools
+│   └── .disabled/               # retired extensions (web_search, web_extract, web_crawl)
 ├── end-scripts/
 │   └── piper-end.js             # Pipe validation + extraction (7 validators + LLM extractor)
 └── skills/
+    ├── describe-image/SKILL.md  # Gemini Vision image description
+    ├── kernel-browser/SKILL.md  # Cloud browser automation (Kernel)
     ├── llm-cli/SKILL.md         # llm CLI reference
     └── pipe-tricks/SKILL.md     # Shell piping patterns
 ```

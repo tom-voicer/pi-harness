@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# describe-image — Send an image to Gemini for description
+# Usage: describe-image <image-url-or-path> [custom-prompt]
+# Default prompt: "Describe in detail what you see in the image."
+
+set -euo pipefail
+
+# ── Resolve API key ──────────────────────────────────────────────
+KERNEL_API_KEY=""
+if [ -f "$HOME/.pi/agent/auth.json" ]; then
+  KERNEL_API_KEY=$(jq -r '.gemini.key' "$HOME/.pi/agent/auth.json" 2>/dev/null || echo "")
+fi
+if [ -z "$KERNEL_API_KEY" ] || [ "$KERNEL_API_KEY" = "null" ]; then
+  echo "ERROR: Gemini API key not found in ~/.pi/agent/auth.json" >&2
+  exit 1
+fi
+
+# ── Parse arguments ──────────────────────────────────────────────
+if [ $# -lt 1 ]; then
+  echo "Usage: describe-image <image-url-or-path> [custom-prompt]" >&2
+  echo "  image-url-or-path  URL (http/https) or local file path" >&2
+  echo "  custom-prompt      Override the default description prompt" >&2
+  exit 1
+fi
+
+IMAGE_INPUT="$1"
+PROMPT="${2:-Describe in detail what you see in the image.}"
+MODEL="gemini-2.5-flash"
+
+# ── Resolve image source ─────────────────────────────────────────
+TMP_FILE=""
+cleanup() { rm -f "$TMP_FILE"; }
+trap cleanup EXIT
+
+if [[ "$IMAGE_INPUT" =~ ^https?:// ]]; then
+  # URL — download to temp file
+  TMP_FILE=$(mktemp /tmp/describe-image-XXXXXX)
+  if ! curl -fsSL "$IMAGE_INPUT" -o "$TMP_FILE"; then
+    echo "ERROR: Failed to download image from $IMAGE_INPUT" >&2
+    exit 1
+  fi
+  IMAGE_PATH="$TMP_FILE"
+else
+  # Local file path
+  if [ ! -f "$IMAGE_INPUT" ]; then
+    echo "ERROR: File not found: $IMAGE_INPUT" >&2
+    exit 1
+  fi
+  IMAGE_PATH="$IMAGE_INPUT"
+fi
+
+# ── Detect mime type ─────────────────────────────────────────────
+MIME=$(file --brief --mime-type "$IMAGE_PATH")
+case "$MIME" in
+  image/jpeg|image/png|image/webp|image/gif|image/bmp|image/tiff) ;;
+  *)
+    echo "ERROR: Unsupported image type: $MIME (supported: jpeg, png, webp, gif, bmp, tiff)" >&2
+    exit 1
+    ;;
+esac
+
+# ── Base64 encode ────────────────────────────────────────────────
+BASE64_IMG=$(base64 -i "$IMAGE_PATH")
+
+# ── Call Gemini API ──────────────────────────────────────────────
+API_URL="https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KERNEL_API_KEY}"
+
+PAYLOAD=$(jq -n \
+  --arg b64 "$BASE64_IMG" \
+  --arg mime "$MIME" \
+  --arg prompt "$PROMPT" \
+  '{
+    contents: [{
+      parts: [
+        {inlineData: {mimeType: $mime, data: $b64}},
+        {text: $prompt}
+      ]
+    }]
+  }')
+
+RESPONSE=$(curl -s "$API_URL" \
+  -H "Content-Type: application/json" \
+  -d "$PAYLOAD")
+
+# ── Handle errors ────────────────────────────────────────────────
+ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty' 2>/dev/null)
+if [ -n "$ERROR" ]; then
+  echo "Gemini API error: $ERROR" >&2
+  echo "$RESPONSE" | jq '.error' >&2
+  exit 1
+fi
+
+# ── Output description ───────────────────────────────────────────
+echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text // "ERROR: Unexpected response structure"'
